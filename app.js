@@ -1,4 +1,10 @@
 const grades = ["0", "0.5+", "1+", "2+", "3+", "4+"];
+const manualFrontGrades = [
+  {label:"0", value:"0"}, {label:"0.5+", value:"0.5+"},
+  {label:"1+ (MF)", value:"mf1"}, {label:"2+ (MF)", value:"mf2"},
+  {label:"3+ (MF)", value:"mf3"}, {label:"4+", value:"4+"}
+];
+const manualBackGrades = grades.map(grade => ({label:grade, value:grade}));
 const tests = [
   { id: "antiA", name: "Anti-A", desc: "A 항원", group: "forward" },
   { id: "antiB", name: "Anti-B", desc: "B 항원", group: "forward" },
@@ -155,16 +161,10 @@ function showResult(a) {
 }
 
 function showISForm() {
-  const frontISGrades = [
-    {label:"0", value:"0"}, {label:"0.5+", value:"0.5+"},
-    {label:"1+ (MF)", value:"mf1"}, {label:"2+ (MF)", value:"mf2"},
-    {label:"3+ (MF)", value:"mf3"}, {label:"4+", value:"4+"}
-  ];
-  const backISGrades = grades.map(grade => ({label:grade, value:grade}));
   const area = document.getElementById("isArea");
   area.innerHTML = `<div class="is-form"><div class="is-form-head"><span>02</span><div><strong>수기법 IS 결과</strong><small>Immediate Spin 재검 성상</small></div></div>
-    ${renderISGroup("Front Typing", "정형검사", tests.filter(test => test.group === "forward"), frontISGrades)}
-    ${renderISGroup("Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), backISGrades)}
+    ${renderManualGroup("is", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades)}
+    ${renderManualGroup("is", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades)}
     <button type="button" class="is-analyze-button" id="analyzeIsButton">IS 결과 재판정 <span>→</span></button>
     <div id="isResult"></div></div>`;
   document.getElementById("startIsButton").hidden = true;
@@ -172,15 +172,19 @@ function showISForm() {
   area.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
 
-function renderISGroup(title, subtitle, groupTests, isGrades) {
-  return `<div class="is-typing-group"><div class="is-group-label"><strong>${title}</strong><small>${subtitle}</small></div><div class="is-test-list">${groupTests.map(test => `<div class="is-test-row"><span>${test.name}</span><div class="is-grade-options">${isGrades.map((grade, i) => `<input type="radio" id="is-${test.id}-${i}" name="is-${test.id}" value="${grade.value}" ${i === 0 ? "checked" : ""}><label for="is-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div></div>`;
+function renderManualGroup(prefix, title, subtitle, groupTests, manualGrades) {
+  return `<div class="is-typing-group"><div class="is-group-label"><strong>${title}</strong><small>${subtitle}</small></div><div class="is-test-list">${groupTests.map(test => `<div class="is-test-row"><span>${test.name}</span><div class="is-grade-options">${manualGrades.map((grade, i) => `<input type="radio" id="${prefix}-${test.id}-${i}" name="${prefix}-${test.id}" value="${grade.value}" ${i === 0 ? "checked" : ""}><label for="${prefix}-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div></div>`;
+}
+
+function readManualResults(prefix) {
+  return Object.fromEntries(tests.map(test => {
+    const raw = document.querySelector(`input[name="${prefix}-${test.id}"]:checked`).value;
+    return [test.id, raw.startsWith("mf") ? raw : valueOf(raw)];
+  }));
 }
 
 function analyzeIS() {
-  const r = Object.fromEntries(tests.map(test => {
-    const raw = document.querySelector(`input[name="is-${test.id}"]:checked`).value;
-    return [test.id, raw.startsWith("mf") ? raw : valueOf(raw)];
-  }));
+  const r = readManualResults("is");
   const match = findNormalPattern(r);
   const box = document.getElementById("isResult");
   if (match) {
@@ -188,13 +192,36 @@ function analyzeIS() {
     box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>초기 불일치가 수기법 IS 재검에서 해소되었습니다. 이전 결과와 비교하고 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
   } else {
     const classification = classifyISDiscrepancy(r);
+    const needs15Min = [classification.front, classification.back].some(item => item?.hasWeakMissing);
     box.className = "is-outcome unresolved";
     box.dataset.frontClassification = classification.front?.label || "normal";
     box.dataset.backClassification = classification.back?.label || "normal";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
-      <p>ABO/RhD형을 확정하지 말고, 기관 SOP에 따라 원인별 추가검사를 진행하세요.</p>`;
+      <p>${needs15Min ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "ABO/RhD형을 확정하지 말고, 기관 SOP에 따라 원인별 추가검사를 진행하세요."}</p>
+      ${needs15Min ? `<button type="button" class="manual15-button" id="start15MinButton">Manual 15분 후 재입력 <span>→</span></button><div id="manual15Area"></div>` : ""}`;
+    if (needs15Min) document.getElementById("start15MinButton").addEventListener("click", showManual15Form);
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+function showManual15Form() {
+  const area = document.getElementById("manual15Area");
+  area.innerHTML = `<div class="manual15-form"><div class="is-form-head"><span>03</span><div><strong>Manual 15분 방치 후 결과</strong><small>15분 후 응집 성상 재판정</small></div></div>
+    ${renderManualGroup("m15", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades)}
+    ${renderManualGroup("m15", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades)}
+    <button type="button" class="is-analyze-button" id="analyze15MinButton">15분 결과 재판정 <span>→</span></button><div id="manual15Result"></div></div>`;
+  document.getElementById("start15MinButton").hidden = true;
+  document.getElementById("analyze15MinButton").addEventListener("click", analyzeManual15);
+}
+
+function analyzeManual15() {
+  const r = readManualResults("m15");
+  const match = findNormalPattern(r);
+  const box = document.getElementById("manual15Result");
+  box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
+  box.innerHTML = match
+    ? `<span>RESOLVED</span><strong>15분 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>기관 SOP에 따라 최종 검증·보고하세요.</p>`
+    : `<span>UNRESOLVED</span><strong>15분 방치 후에도 불일치가 지속됩니다.</strong><p>ABO/RhD형을 확정하지 말고 원인별 추가검사를 진행하세요.</p>`;
 }
 
 function classifyISDiscrepancy(r) {
@@ -218,10 +245,10 @@ function classifyISDiscrepancy(r) {
     const categoryCount = [mixed.length, missingWeak.length, unexpectedPresent.length].filter(Boolean).length;
     if (!categoryCount) return null;
     const prefix = `${groupName} - `;
-    if (categoryCount > 1) return {label:`${prefix}multiple abnormalities`, details:[...mixed, ...missingWeak, ...unexpectedPresent]};
-    if (mixed.length) return {label:`${prefix}mixed field`, details:mixed};
-    if (unexpectedPresent.length) return {label:`${prefix}present`, details:unexpectedPresent};
-    return {label:`${prefix}weak/missing`, details:missingWeak};
+    if (categoryCount > 1) return {label:`${prefix}multiple abnormalities`, details:[...mixed, ...missingWeak, ...unexpectedPresent], hasWeakMissing:missingWeak.length > 0};
+    if (mixed.length) return {label:`${prefix}mixed field`, details:mixed, hasWeakMissing:false};
+    if (unexpectedPresent.length) return {label:`${prefix}present`, details:unexpectedPresent, hasWeakMissing:false};
+    return {label:`${prefix}weak/missing`, details:missingWeak, hasWeakMissing:true};
   };
 
   return {

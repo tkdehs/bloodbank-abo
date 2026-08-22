@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="ABO 정형·역형 불일치 확인검사 안내 도구" />
+  <title>ABO Resolve — 불일치 판별 도우미</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="ABO Resolve 홈">
+      <span class="brand-mark" aria-hidden="true">A<span>B</span></span>
+      <span>ABO Resolve</span>
+    </a>
+    <span class="header-tag">혈액은행 · 판별 보조</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">ABO DISCREPANCY WORKUP</p>
+        <h1>응집 반응을 입력하면<br><em>다음 검사</em>를 안내합니다.</h1>
+      </div>
+      <p class="hero-copy">정형검사와 역형검사의 일치 여부를 확인하고, 관찰된 패턴에 따라 원인 후보와 단계별 확인검사를 제안합니다.</p>
+    </section>
+
+    <div class="workspace">
+      <section class="input-panel" aria-labelledby="input-heading">
+        <div class="section-head">
+          <div>
+            <span class="step">01</span>
+            <h2 id="input-heading">검사 결과 입력</h2>
+          </div>
+          <button class="text-button" id="resetButton" type="button">전체 초기화</button>
+        </div>
+
+        <div class="context-grid">
+          <label class="field">
+            <span>대상</span>
+            <select id="patientType">
+              <option value="adult">성인 / 생후 4개월 이상</option>
+              <option value="infant">생후 4개월 미만</option>
+              <option value="donor">헌혈자</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>참고 혈액형 <small>(선택)</small></span>
+            <select id="previousType">
+              <option value="">이전 결과 없음</option>
+              <option value="O">O형</option><option value="A">A형</option>
+              <option value="B">B형</option><option value="AB">AB형</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="test-group">
+          <div class="group-label">
+            <span class="dot coral"></span>
+            <div><strong>Front Typing</strong><small>정형검사 · 환자 적혈구의 항원 확인</small></div>
+          </div>
+          <div id="forwardTests" class="test-list"></div>
+        </div>
+
+        <div class="test-group">
+          <div class="group-label">
+            <span class="dot blue"></span>
+            <div><strong>Back Typing</strong><small>역형검사 · 환자 혈장/혈청의 항체 확인</small></div>
+          </div>
+          <div id="reverseTests" class="test-list"></div>
+        </div>
+
+        <details class="history-box">
+          <summary>임상 정보 추가 <span>선택사항</span></summary>
+          <div class="checks">
+            <label><input type="checkbox" value="transfusion"> 최근 3개월 내 수혈</label>
+            <label><input type="checkbox" value="transplant"> 조혈모세포/장기이식</label>
+            <label><input type="checkbox" value="immune"> 면역저하·저감마글로불린혈증</label>
+            <label><input type="checkbox" value="pregnancy"> 임신·산과력</label>
+          </div>
+        </details>
+
+        <button class="primary-button" id="analyzeButton" type="button">
+          <span>불일치 분석하기</span><span aria-hidden="true">→</span>
+        </button>
+      </section>
+
+      <aside class="result-panel" aria-live="polite">
+        <div id="emptyState" class="empty-state">
+          <div class="orbit" aria-hidden="true"><span></span><i></i></div>
+          <p class="eyebrow">READY TO ANALYZE</p>
+          <h2>결과를 기다리고 있어요</h2>
+          <p>왼쪽에서 각 시약의 응집 강도를 선택한 후 분석 버튼을 눌러주세요.</p>
+        </div>
+        <div id="resultState" class="result-state" hidden></div>
+      </aside>
+    </div>
+
+    <section class="legend-card">
+      <div><span class="step">TIP</span><h2>응집 강도 기준</h2></div>
+      <div class="legend-scale">
+        <span><b>0</b> 음성</span><span><b>0.5+</b> 매우 약함</span><span><b>1+</b> 약함</span>
+        <span><b>2+</b> 중등도</span><span><b>3+</b> 강함</span><span><b>4+</b> 매우 강함</span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>교육 및 검사실 의사결정 보조용입니다. 최종 판정은 기관 SOP와 수혈의학 전문가의 검토를 따르세요.</p>
+    <p>ABO Resolve · Prototype</p>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

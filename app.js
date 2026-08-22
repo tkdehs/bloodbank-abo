@@ -308,7 +308,7 @@ function createUnexpectedRule(analysis, location) {
     abnormalKeys:abnormalities.map(item => item.key),
     abnormalTargets:abnormalities.map(item => item.target),
     suspectedCause:location === "FRONT" ? "Cold interference 의심" : "Unexpected antibody 또는 cold interference 의심",
-    nextAction:location === "FRONT" ? "37℃ 조건 ABO 재검" : "연전 과거력 확인 및 Ab screening 검사",
+    nextAction:location === "FRONT" ? "37℃ 조건 ABO 재검" : "연전 과거력 확인, Ab screening 검사 및 37℃ 조건 ABO 검사",
     expectedGroup:analysis.candidateABO
   };
 }
@@ -322,7 +322,7 @@ function analyzeExpectedVsActual(r) {
 }
 
 function renderBackUnexpectedResolution(rule) {
-  return `<div class="back-resolution"><small>BACK UNEXPECTED RESOLUTION</small><strong>${rule.abnormalTargets.join(", ")} unexpected reaction</strong><p>15분 방치는 시행하지 않습니다. 연전 과거력을 확인하고 Ab screening 검사를 시행하세요.</p></div>`;
+  return `<div class="back-resolution"><small>BACK UNEXPECTED RESOLUTION</small><strong>${rule.abnormalTargets.join(", ")} unexpected reaction</strong><p>15분 방치는 시행하지 않습니다. 연전 과거력을 확인하고 Ab screening 검사 및 37℃ 조건 ABO 검사를 시행하세요.</p></div>`;
 }
 
 function displayReaction(value) {

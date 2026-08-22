@@ -192,12 +192,14 @@ function analyzeIS() {
     box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>초기 불일치가 수기법 IS 재검에서 해소되었습니다. 이전 결과와 비교하고 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
   } else {
     const classification = classifyISDiscrepancy(r);
-    const needs15Min = [classification.front, classification.back].some(item => item?.hasWeakMissing);
+    const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
+    // IS 재검 후에도 불일치가 남으면 분류와 관계없이 15분 방치 재검으로 진행한다.
+    const needs15Min = true;
     box.className = "is-outcome unresolved";
     box.dataset.frontClassification = classification.front?.label || "normal";
     box.dataset.backClassification = classification.back?.label || "normal";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
-      <p>${needs15Min ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "ABO/RhD형을 확정하지 말고, 기관 SOP에 따라 원인별 추가검사를 진행하세요."}</p>
+      <p>${hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요."}</p>
       ${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
     if (needs15Min) showManual15Form();
   }

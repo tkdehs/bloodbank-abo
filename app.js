@@ -191,25 +191,25 @@ function weakDGradeSelect(name, label) {
 }
 
 function showWeakDForm(antiDValue) {
-  const includePlateAndDAT = antiDValue >= 0.5;
-  const methods = includePlateAndDAT ? ["Plate법","Tube법","IAT"] : ["Tube법","IAT"];
+  const includePlate = antiDValue >= 0.5;
+  const methods = includePlate ? ["Plate법","Tube법","IAT"] : ["Tube법","IAT"];
   const area = document.getElementById("weakDArea");
   area.innerHTML = `<div class="is-form weak-d-form"><div class="is-form-head"><span>02</span><div><strong>Weak D 검사 결과</strong><small>과거 결과가 없는 Anti-D 4+ 미만 검체</small></div></div>
-    <div class="weak-d-section"><h3>Testing for Weak D</h3><div class="weak-d-table ${includePlateAndDAT ? "four-columns" : "three-columns"}" role="table" aria-label="Weak D 검사 결과">
+    <div class="weak-d-section"><h3>Testing for Weak D</h3><div class="weak-d-table ${includePlate ? "four-columns" : "three-columns"}" role="table" aria-label="Weak D 검사 결과">
       <div class="weak-d-head">Anti-D Reagents</div>${methods.map(method => `<div class="weak-d-head">${method}</div>`).join("")}
       ${["Ortho","SHIDIA","Control"].map(reagent => `<div class="weak-d-reagent">${reagent}</div>${methods.map(method => weakDGradeSelect(`weakd-${reagent.toLowerCase()}-${method === "Plate법" ? "plate" : method === "Tube법" ? "tube" : "iat"}`, method)).join("")}`).join("")}
     </div></div>
     <div class="weak-d-section"><h3>Rh Subtyping</h3><div class="rh-subtyping-grid">${["Anti-C","Anti-E","Anti-c","Anti-e"].map((reagent, index) => weakDGradeSelect(`rh-sub-${index}`, reagent)).join("")}</div></div>
-    ${includePlateAndDAT ? `<div class="weak-d-section"><h3>DAT 검사 결과</h3><div class="dat-options">${["Negative","Weak positive","Positive"].map((result, index) => `<input type="radio" id="dat-${index}" name="dat-result" value="${result}" ${index === 0 ? "checked" : ""}><label for="dat-${index}">${result}</label>`).join("")}</div></div>` : ""}
+    <div class="weak-d-section"><h3>DAT 검사 결과</h3><div class="dat-options">${["Negative","Weak positive","Positive"].map((result, index) => `<input type="radio" id="dat-${index}" name="dat-result" value="${result}" ${index === 0 ? "checked" : ""}><label for="dat-${index}">${result}</label>`).join("")}</div></div>
     <button type="button" class="is-analyze-button" id="saveWeakDButton">Weak D 검사 결과 확인 <span>→</span></button><div id="weakDResult"></div></div>`;
   document.getElementById("startWeakDButton").hidden = true;
-  document.getElementById("saveWeakDButton").addEventListener("click", () => summarizeWeakDResults(includePlateAndDAT));
+  document.getElementById("saveWeakDButton").addEventListener("click", () => summarizeWeakDResults(includePlate));
   area.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
 
-function summarizeWeakDResults(includePlateAndDAT) {
+function summarizeWeakDResults(includePlate) {
   const value = name => document.querySelector(`[name="${name}"]`).value;
-  const methodKeys = includePlateAndDAT ? ["plate","tube","iat"] : ["tube","iat"];
+  const methodKeys = includePlate ? ["plate","tube","iat"] : ["tube","iat"];
   const strength = (reagent, method) => valueOf(value(`weakd-${reagent}-${method}`));
   const reagentResults = reagent => Object.fromEntries(methodKeys.map(method => [method,strength(reagent,method)]));
   const ortho = reagentResults("ortho");
@@ -219,18 +219,18 @@ function summarizeWeakDResults(includePlateAndDAT) {
   const antiDAnyPositive = methodKeys.some(method => ortho[method] > 0 || shidia[method] > 0);
   const antiDAllNegative = !antiDAnyPositive;
   const reagentDiscrepant = methodKeys.some(method => (ortho[method] > 0) !== (shidia[method] > 0));
-  const directKeys = includePlateAndDAT ? ["plate","tube"] : ["tube"];
+  const directKeys = includePlate ? ["plate","tube"] : ["tube"];
   const iatEnhanced = [ortho,shidia].some(result => result.iat > 0 && result.iat > Math.max(...directKeys.map(method => result[method])));
-  const tableRows = ["ortho","shidia","control"].map(reagent => `${reagent.toUpperCase()}: ${includePlateAndDAT ? `Plate ${value(`weakd-${reagent}-plate`)} / ` : ""}Tube ${value(`weakd-${reagent}-tube`)} / IAT ${value(`weakd-${reagent}-iat`)}`);
+  const tableRows = ["ortho","shidia","control"].map(reagent => `${reagent.toUpperCase()}: ${includePlate ? `Plate ${value(`weakd-${reagent}-plate`)} / ` : ""}Tube ${value(`weakd-${reagent}-tube`)} / IAT ${value(`weakd-${reagent}-iat`)}`);
   const rhNames = ["C","E","c","e"];
   const rhStrengths = rhNames.map((name,index) => ({name,value:value(`rh-sub-${index}`),positive:value(`rh-sub-${index}`) !== "0"}));
   const rhPhenotype = rhStrengths.map(item => `${item.name}${item.positive ? "+" : "−"}`).join(" ");
   const rhResults = rhStrengths.map(item => `Anti-${item.name} ${item.value}`);
   const cOrEPositive = value("rh-sub-0") !== "0" || value("rh-sub-1") !== "0";
   const needsDelOpinion = controlValid && !reagentDiscrepant && antiDAllNegative && cOrEPositive;
-  const dat = includePlateAndDAT ? document.querySelector('[name="dat-result"]:checked').value : null;
+  const dat = document.querySelector('[name="dat-result"]:checked').value;
   const datPositive = dat === "Weak positive" || dat === "Positive";
-  const needsZZAP = antiDAnyPositive && datPositive;
+  const needsZZAP = datPositive;
   const validity = controlValid ? "VALID · Control 모두 음성" : "INVALID / INTERFERENCE CHECK REQUIRED · Control 양성";
   let antiDInterpretation;
   let possibleInterpretation;
@@ -251,7 +251,7 @@ function summarizeWeakDResults(includePlateAndDAT) {
   if (!controlValid) nextActions.push("Control 양성 원인과 검사 간섭을 확인하고 유효한 조건에서 재검하세요.");
   if (reagentDiscrepant) nextActions.push("ORTHO와 SHIDIA 불일치 원인을 확인하고 자동 확정하지 마세요.");
   if (antiDAnyPositive) nextActions.push("Tube법으로 15분 방치 후 결과를 확인하세요.");
-  if (needsZZAP) nextActions.push("Weak D 표와 DAT가 모두 양성이므로 ZZAP 처리 후 확인하세요.");
+  if (needsZZAP) nextActions.push("DAT가 양성이므로 ZZAP 처리 후 확인하는 것을 권장합니다.");
   if (needsDelOpinion) nextActions.push("DEL형을 배제할 수 없으므로 Weak D opinion을 입력하세요.");
   nextActions.push("혈청학적 결과만으로 molecular weak D type 또는 partial D subtype을 확정하지 마세요.");
   nextActions.push("필요 시 기관 SOP에 따른 추가 검사 또는 RHD genotyping을 검토하세요.");
@@ -259,7 +259,7 @@ function summarizeWeakDResults(includePlateAndDAT) {
   box.className = "is-outcome unresolved";
   box.innerHTML = `<span>WEAK D AUTO INTERPRETATION</span><strong>Weak D 자동 해석 결과</strong><div class="weak-d-interpretation">
     <section><small>01 · 검사 유효성</small><b>${validity}</b><p>${tableRows.join(" · ")}</p></section>
-    <section><small>02 · Anti-D 해석</small><b>${antiDInterpretation}</b><p>ORTHO와 SHIDIA의 ${includePlateAndDAT ? "Plate / Tube / IAT" : "Tube / IAT"} 반응을 비교했습니다.</p></section>
+    <section><small>02 · Anti-D 해석</small><b>${antiDInterpretation}</b><p>ORTHO와 SHIDIA의 ${includePlate ? "Plate / Tube / IAT" : "Tube / IAT"} 반응을 비교했습니다.</p></section>
     <section><small>03 · Rh phenotype</small><b>${rhPhenotype}</b><p>${rhResults.join(" · ")}</p></section>
     <section><small>04 · DAT</small><b>${dat || "미시행"}</b>${datPositive ? "<p>DAT 양성이므로 결과 해석에 주의가 필요합니다.</p>" : ""}</section>
     <section><small>05 · 가능한 해석</small><b>${possibleInterpretation}</b></section>

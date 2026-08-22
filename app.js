@@ -193,17 +193,38 @@ function analyzeIS() {
   } else {
     const classification = classifyISDiscrepancy(r);
     const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
-    // IS 재검 후에도 불일치가 남으면 분류와 관계없이 15분 방치 재검으로 진행한다.
-    const needs15Min = true;
+    const needsWarm25 = Boolean(classification.front?.hasUnexpectedPresent);
+    // Front unexpected present는 37℃ 재검을 우선하고, 그 외 미해결 결과는 15분 방치 재검으로 진행한다.
+    const needs15Min = !needsWarm25;
     box.className = "is-outcome unresolved";
     box.dataset.frontClassification = classification.front?.label || "normal";
     box.dataset.backClassification = classification.back?.label || "normal";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
-      <p>${hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요."}</p>
-      ${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
+      <p>${needsWarm25 ? "Front Typing에서 unexpected present가 확인되어 cold antibody가 의심됩니다. 37℃에서 25분간 방치한 뒤 성상을 다시 판정하세요." : hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요."}</p>
+      ${needsWarm25 ? `<div id="warm25Area"></div>` : `<div id="manual15Area"></div>`}`;
+    if (needsWarm25) showWarm25Form();
     if (needs15Min) showManual15Form();
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+function showWarm25Form() {
+  const area = document.getElementById("warm25Area");
+  area.innerHTML = `<div class="manual15-form warm25-form"><div class="is-form-head"><span>03</span><div><strong>37℃ 25분 방치 후 결과</strong><small>Cold antibody 확인 재검</small></div></div>
+    ${renderManualGroup("w25", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades)}
+    ${renderManualGroup("w25", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades)}
+    <button type="button" class="is-analyze-button" id="analyzeWarm25Button">37℃ 결과 재판정 <span>→</span></button><div id="warm25Result"></div></div>`;
+  document.getElementById("analyzeWarm25Button").addEventListener("click", analyzeWarm25);
+}
+
+function analyzeWarm25() {
+  const r = readManualResults("w25");
+  const match = findNormalPattern(r);
+  const box = document.getElementById("warm25Result");
+  box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
+  box.innerHTML = match
+    ? `<span>RESOLVED</span><strong>37℃ 방치 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
+    : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong><p>ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
 }
 
 function showManual15Form() {
@@ -305,10 +326,10 @@ function classifyISDiscrepancy(r) {
     const categoryCount = [mixed.length, missingWeak.length, unexpectedPresent.length].filter(Boolean).length;
     if (!categoryCount) return null;
     const prefix = `${groupName} - `;
-    if (categoryCount > 1) return {label:`${prefix}multiple abnormalities`, details:[...mixed, ...missingWeak, ...unexpectedPresent], hasWeakMissing:missingWeak.length > 0};
-    if (mixed.length) return {label:`${prefix}mixed field`, details:mixed, hasWeakMissing:false};
-    if (unexpectedPresent.length) return {label:`${prefix}present`, details:unexpectedPresent, hasWeakMissing:false};
-    return {label:`${prefix}weak/missing`, details:missingWeak, hasWeakMissing:true};
+    if (categoryCount > 1) return {label:`${prefix}multiple abnormalities`, details:[...mixed, ...missingWeak, ...unexpectedPresent], hasWeakMissing:missingWeak.length > 0, hasUnexpectedPresent:unexpectedPresent.length > 0};
+    if (mixed.length) return {label:`${prefix}mixed field`, details:mixed, hasWeakMissing:false, hasUnexpectedPresent:false};
+    if (unexpectedPresent.length) return {label:`${prefix}present`, details:unexpectedPresent, hasWeakMissing:false, hasUnexpectedPresent:true};
+    return {label:`${prefix}weak/missing`, details:missingWeak, hasWeakMissing:true, hasUnexpectedPresent:false};
   };
 
   return {

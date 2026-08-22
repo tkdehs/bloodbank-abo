@@ -192,11 +192,13 @@ function analyzeIS() {
     box.className = "is-outcome resolved";
     box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}<p>초기 ABO 불일치가 수기법 IS 재검에서 해소되었습니다. RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
   } else {
-    const frontUnexpectedRule = createFrontUnexpectedRule(classification);
+    const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
+    const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
     const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
-    // Front unexpected present는 37℃ 재검을 우선하고, 그 외 미해결 결과는 15분 방치 재검으로 진행한다.
-    const needs15Min = !needsWarm25;
+    const hasUnexpectedPresent = Boolean(frontUnexpectedRule || backUnexpectedRule);
+    // Unexpected present는 위치와 관계없이 15분 방치를 건너뛴다.
+    const needs15Min = !hasUnexpectedPresent;
     box.className = "is-outcome unresolved";
     box.dataset.candidateAbo = classification.candidateABO;
     box.dataset.classification = classification.classification;
@@ -206,10 +208,11 @@ function analyzeIS() {
     box.dataset.backClassification = classification.back?.label || "normal";
     box.dataset.suspectedCause = frontUnexpectedRule?.suspectedCause || "";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
-      <p>${needsWarm25 ? "Front Typing에서 unexpected present가 확인되어 cold antibody가 의심됩니다. 37℃에서 25분간 방치한 뒤 성상을 다시 판정하세요." : hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요."}</p>
+      <p>${needsWarm25 ? "Front Typing에서 unexpected present가 확인되어 cold antibody가 의심됩니다. 15분 방치를 건너뛰고 37℃ 조건 재검으로 이동합니다." : backUnexpectedRule ? "Back Typing에서 unexpected present가 확인되었습니다. 15분 방치를 건너뛰고 Back unexpected resolution pathway로 이동합니다." : hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. 기존 resolution pathway를 진행하세요."}</p>
       ${renderCandidateSummary(classification)}
       ${frontUnexpectedRule ? renderDecisionSummary(frontUnexpectedRule) : ""}
-      ${needsWarm25 ? `<div id="warm25Area"></div>` : `<div id="manual15Area"></div>`}`;
+      ${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule) : ""}
+      ${needsWarm25 ? `<div id="warm25Area"></div>` : needs15Min ? `<div id="manual15Area"></div>` : ""}`;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
     if (needs15Min) showManual15Form();
   }
@@ -242,27 +245,31 @@ function analyzeWarm25(sourceIS, sourceClassification) {
       : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected) : ""}${comparison}<p>새 결과 전체를 다시 분석했습니다. ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
 }
 
-function createFrontUnexpectedRule(analysis) {
+function createUnexpectedRule(analysis, location) {
   if (analysis.candidateABO === "CANDIDATE_AMBIGUOUS") return null;
-  const abnormalities = analysis.abnormalities.filter(item => item.location === "FRONT" && item.type === "UNEXPECTED_REACTION_PRESENT");
+  const abnormalities = analysis.abnormalities.filter(item => item.location === location && item.type === "UNEXPECTED_REACTION_PRESENT");
   if (!abnormalities.length) return null;
   return {
     classification:"UNEXPECTED_REACTION_PRESENT",
-    location:"FRONT",
+    location,
     abnormalKeys:abnormalities.map(item => item.key),
     abnormalTargets:abnormalities.map(item => item.target),
-    suspectedCause:"Cold interference 의심",
-    nextAction:"37℃ 조건 ABO 재검",
+    suspectedCause:location === "FRONT" ? "Cold interference 의심" : "Unexpected antibody 또는 cold interference 의심",
+    nextAction:location === "FRONT" ? "37℃ 조건 ABO 재검" : "항체선별검사·자가대조 및 37℃ Back typing 재검",
     expectedGroup:analysis.candidateABO
   };
 }
 
 function analyzeExpectedVsActual(r) {
   const generic = classifyISDiscrepancy(r);
-  const frontUnexpected = createFrontUnexpectedRule(generic);
+  const frontUnexpected = createUnexpectedRule(generic, "FRONT");
   const group = generic.candidateABO === "CANDIDATE_AMBIGUOUS" ? null : generic.candidateABO;
   const normalPattern = generic.classification === "NORMAL" ? normalCandidateResult(generic, r) : null;
   return {normalPattern, frontUnexpected, generic, group, expectedMap:generic.expectedPattern, actual:r};
+}
+
+function renderBackUnexpectedResolution(rule) {
+  return `<div class="back-resolution"><small>BACK UNEXPECTED RESOLUTION</small><strong>${rule.abnormalTargets.join(", ")} unexpected reaction</strong><p>15분 방치는 시행하지 않습니다. 항체선별검사, 자가대조를 시행하고 필요 시 DAT 및 37℃ Back typing 재검을 진행하세요.</p></div>`;
 }
 
 function displayReaction(value) {
@@ -301,14 +308,18 @@ function showManual15Form() {
 
 function analyzeManual15() {
   const r = readManualResults("m15");
-  const classification = classifyISDiscrepancy(r);
+  const reanalysis = analyzeExpectedVsActual(r);
+  const classification = reanalysis.generic;
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
-  const subtypeTargets = match ? [] : detectSubtypeTargets(r, classification);
+  const frontUnexpectedRule = match ? null : createUnexpectedRule(classification, "FRONT");
+  const backUnexpectedRule = match ? null : createUnexpectedRule(classification, "BACK");
+  const subtypeTargets = match || frontUnexpectedRule || backUnexpectedRule ? [] : detectSubtypeTargets(r, classification);
   const box = document.getElementById("manual15Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   box.innerHTML = match
-    ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
-    : `<span>UNRESOLVED</span><strong>15분 방치 후에도 불일치가 지속됩니다.</strong><p>${subtypeTargets.length ? "Front Typing 이상이 지속되어 ABO 아형검사가 필요합니다." : "ABO/RhD형을 확정하지 말고 원인별 추가검사를 진행하세요."}</p>${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
+    ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
+    : `<span>REANALYZED</span><strong>15분 후 결과를 Candidate ABO부터 다시 분석했습니다.</strong>${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${frontUnexpectedRule ? renderDecisionSummary(frontUnexpectedRule) : ""}${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule) : ""}<p>${frontUnexpectedRule ? "새 결과가 Front unexpected present로 분류되어 37℃ resolution으로 이동합니다." : backUnexpectedRule ? "새 결과가 Back unexpected present로 분류되어 전용 resolution으로 이동합니다." : subtypeTargets.length ? "Front Typing 이상이 지속되어 ABO 아형검사가 필요합니다." : "불일치가 지속되어 원인별 추가검사가 필요합니다."}</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
+  if (frontUnexpectedRule) showWarm25Form(r, {...classification,front:{...classification.front,unexpectedKeys:frontUnexpectedRule.abnormalKeys}});
   if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r);
 }
 

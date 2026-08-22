@@ -198,8 +198,8 @@ function analyzeIS() {
     box.dataset.backClassification = classification.back?.label || "normal";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
       <p>${needs15Min ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "ABO/RhD형을 확정하지 말고, 기관 SOP에 따라 원인별 추가검사를 진행하세요."}</p>
-      ${needs15Min ? `<button type="button" class="manual15-button" id="start15MinButton">Manual 15분 후 재입력 <span>→</span></button><div id="manual15Area"></div>` : ""}`;
-    if (needs15Min) document.getElementById("start15MinButton").addEventListener("click", showManual15Form);
+      ${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
+    if (needs15Min) showManual15Form();
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
@@ -210,7 +210,6 @@ function showManual15Form() {
     ${renderManualGroup("m15", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades)}
     ${renderManualGroup("m15", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades)}
     <button type="button" class="is-analyze-button" id="analyze15MinButton">15분 결과 재판정 <span>→</span></button><div id="manual15Result"></div></div>`;
-  document.getElementById("start15MinButton").hidden = true;
   document.getElementById("analyze15MinButton").addEventListener("click", analyzeManual15);
 }
 

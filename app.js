@@ -192,17 +192,20 @@ function analyzeIS() {
     box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>초기 불일치가 수기법 IS 재검에서 해소되었습니다. 이전 결과와 비교하고 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
   } else {
     const classification = classifyISDiscrepancy(r);
+    const frontUnexpectedRule = classifyFrontUnexpectedByBack(r);
     const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
-    const needsWarm25 = Boolean(classification.front?.hasUnexpectedPresent);
+    const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
     // Front unexpected present는 37℃ 재검을 우선하고, 그 외 미해결 결과는 15분 방치 재검으로 진행한다.
     const needs15Min = !needsWarm25;
     box.className = "is-outcome unresolved";
-    box.dataset.frontClassification = classification.front?.label || "normal";
+    box.dataset.frontClassification = frontUnexpectedRule?.classification || classification.front?.label || "normal";
     box.dataset.backClassification = classification.back?.label || "normal";
+    box.dataset.suspectedCause = frontUnexpectedRule?.suspectedCause || "";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
       <p>${needsWarm25 ? "Front Typing에서 unexpected present가 확인되어 cold antibody가 의심됩니다. 37℃에서 25분간 방치한 뒤 성상을 다시 판정하세요." : hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요."}</p>
+      ${frontUnexpectedRule ? renderDecisionSummary(frontUnexpectedRule) : ""}
       ${needsWarm25 ? `<div id="warm25Area"></div>` : `<div id="manual15Area"></div>`}`;
-    if (needsWarm25) showWarm25Form(r, classification);
+    if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
     if (needs15Min) showManual15Form();
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
@@ -219,17 +222,77 @@ function showWarm25Form(sourceIS, sourceClassification) {
 
 function analyzeWarm25(sourceIS, sourceClassification) {
   const r = readManualResults("w25");
-  const match = findNormalPattern(r);
+  const reanalysis = analyzeExpectedVsActual(r);
+  const match = reanalysis.normalPattern;
   const strength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
   const unexpectedKeys = sourceClassification.front?.unexpectedKeys || [];
   const weakenedButPresent = unexpectedKeys.filter(key => strength(r[key]) > 0 && strength(r[key]) < strength(sourceIS[key]));
   const box = document.getElementById("warm25Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
+  const comparison = renderExpectedActual(reanalysis);
   box.innerHTML = match
-    ? `<span>RESOLVED</span><strong>37℃ 방치 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
+    ? `<span>RESOLVED</span><strong>37℃ 방치 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong>${comparison}<p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
     : weakenedButPresent.length
-      ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong><p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
-      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong><p>ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
+      ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong>${comparison}<p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
+      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected) : ""}${comparison}<p>새 결과 전체를 다시 분석했습니다. ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
+}
+
+function classifyFrontUnexpectedByBack(r) {
+  const positive = value => typeof value === "string" ? value.startsWith("mf") : value > 0;
+  let expectedGroup = null;
+  if (r.a1cell >= 2 && r.bcell >= 2) expectedGroup = "O";
+  else if (r.a1cell === 0 && r.bcell >= 2) expectedGroup = "A";
+  else if (r.a1cell >= 2 && r.bcell === 0) expectedGroup = "B";
+  else if (r.a1cell === 0 && r.bcell === 0) expectedGroup = "AB";
+  if (!expectedGroup) return null;
+  const expected = {
+    O:{antiA:0,antiB:0}, A:{antiA:4,antiB:0},
+    B:{antiA:0,antiB:4}, AB:{antiA:4,antiB:4}
+  }[expectedGroup];
+  const abnormalKeys = ["antiA","antiB"].filter(key => expected[key] === 0 && positive(r[key]));
+  if (!abnormalKeys.length) return null;
+  return {
+    classification:"UNEXPECTED_REACTION_PRESENT",
+    location:"FRONT",
+    abnormalKeys,
+    abnormalTargets:abnormalKeys.map(key => tests.find(test => test.id === key)?.name),
+    suspectedCause:"Cold interference 의심",
+    nextAction:"37℃ 조건 ABO 재검",
+    expectedGroup
+  };
+}
+
+function analyzeExpectedVsActual(r) {
+  const normalPattern = findNormalPattern(r);
+  const frontUnexpected = classifyFrontUnexpectedByBack(r);
+  const generic = normalPattern ? null : classifyISDiscrepancy(r);
+  const group = frontUnexpected?.expectedGroup || normalPattern?.type || generic?.reference?.match(/ (A|B|AB|O)형$/)?.[1] || null;
+  const expectedMap = group ? {
+    O:{antiA:"0",antiB:"0",a1cell:"≥2+",bcell:"≥2+"},
+    A:{antiA:"4+",antiB:"0",a1cell:"0",bcell:"≥2+"},
+    B:{antiA:"0",antiB:"4+",a1cell:"≥2+",bcell:"0"},
+    AB:{antiA:"4+",antiB:"4+",a1cell:"0",bcell:"0"}
+  }[group] : null;
+  return {normalPattern, frontUnexpected, generic, group, expectedMap, actual:r};
+}
+
+function displayReaction(value) {
+  if (typeof value === "string" && value.startsWith("mf")) return `${value.slice(2)}+(MF)`;
+  return value === 0 ? "0" : `${value}+`;
+}
+
+function renderDecisionSummary(rule) {
+  return `<dl class="decision-summary"><div><dt>Classification</dt><dd>${rule.classification}</dd></div><div><dt>Location</dt><dd>${rule.location}</dd></div><div><dt>Abnormal targets</dt><dd>${rule.abnormalTargets.join(", ")}</dd></div><div><dt>Suspected Cause</dt><dd>${rule.suspectedCause}</dd></div><div><dt>Next Action</dt><dd>${rule.nextAction}</dd></div></dl>`;
+}
+
+function renderExpectedActual(result) {
+  if (!result.expectedMap) return "";
+  const rows = [
+    ["Anti-A",result.expectedMap.antiA,result.actual.antiA], ["Anti-B",result.expectedMap.antiB,result.actual.antiB],
+    ["Anti-D","0 또는 4+",result.actual.antiD], ["A₁ cell",result.expectedMap.a1cell,result.actual.a1cell],
+    ["B cell",result.expectedMap.bcell,result.actual.bcell]
+  ];
+  return `<div class="comparison-box"><div class="comparison-title">Expected vs Actual · ${result.group}형 기준</div>${rows.map(([name,expected,actual]) => `<div><span>${name}</span><b>${expected}</b><em>${displayReaction(actual)}</em></div>`).join("")}</div>`;
 }
 
 function showManual15Form() {

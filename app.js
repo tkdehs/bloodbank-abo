@@ -218,11 +218,70 @@ function showManual15Form() {
 function analyzeManual15() {
   const r = readManualResults("m15");
   const match = findNormalPattern(r);
+  const classification = match ? null : classifyISDiscrepancy(r);
+  const subtypeTargets = match ? [] : detectSubtypeTargets(r, classification);
   const box = document.getElementById("manual15Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   box.innerHTML = match
     ? `<span>RESOLVED</span><strong>15분 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>기관 SOP에 따라 최종 검증·보고하세요.</p>`
-    : `<span>UNRESOLVED</span><strong>15분 방치 후에도 불일치가 지속됩니다.</strong><p>ABO/RhD형을 확정하지 말고 원인별 추가검사를 진행하세요.</p>`;
+    : `<span>UNRESOLVED</span><strong>15분 방치 후에도 불일치가 지속됩니다.</strong><p>${subtypeTargets.length ? "Front Typing 이상이 지속되어 ABO 아형검사가 필요합니다." : "ABO/RhD형을 확정하지 말고 원인별 추가검사를 진행하세요."}</p>${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
+  if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r);
+}
+
+function detectSubtypeTargets(r, classification) {
+  if (!classification?.front) return [];
+  const mixed = value => typeof value === "string" && value.startsWith("mf");
+  const positive = value => mixed(value) || value > 0;
+  const aReversePattern = r.a1cell === 0 && positive(r.bcell);
+  const bReversePattern = positive(r.a1cell) && r.bcell === 0;
+  const aSuspected = mixed(r.antiA) || (aReversePattern && r.antiA !== 4) || (positive(r.antiA) && r.antiA !== 4);
+  const bSuspected = mixed(r.antiB) || (bReversePattern && r.antiB !== 4) || (positive(r.antiB) && r.antiB !== 4);
+  return [aSuspected ? "A" : null, bSuspected ? "B" : null].filter(Boolean);
+}
+
+function showSubtypeForm(targets, manualResult) {
+  const area = document.getElementById("subtypeArea");
+  const subtypeGrades = grades.map(grade => ({label:grade, value:grade}));
+  const testRows = [];
+  if (targets.includes("A")) testRows.push({id:"antiA1", name:"Anti-A₁", desc:"A₁ lectin"});
+  testRows.push({id:"antiH", name:"Anti-H", desc:"H lectin"});
+  area.innerHTML = `<div class="subtype-form"><div class="is-form-head"><span>04</span><div><strong>${targets.join("/")}형 아형검사</strong><small>Lectin 반응 성상 입력</small></div></div>
+    <div class="subtype-note">${targets.includes("A") ? "Anti-A₁과 Anti-H" : "Anti-H"} 결과를 입력하세요.</div>
+    <div class="is-test-list">${testRows.map(test => `<div class="is-test-row"><span>${test.name}<small>${test.desc}</small></span><div class="is-grade-options">${subtypeGrades.map((grade,i) => `<input type="radio" id="sub-${test.id}-${i}" name="sub-${test.id}" value="${grade.value}" ${i===0?"checked":""}><label for="sub-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div>
+    <button type="button" class="is-analyze-button" id="analyzeSubtypeButton">아형 의심 결과 확인 <span>→</span></button><div id="subtypeResult"></div></div>`;
+  document.getElementById("analyzeSubtypeButton").addEventListener("click", () => analyzeSubtype(targets, manualResult));
+}
+
+function analyzeSubtype(targets, r) {
+  const antiH = valueOf(document.querySelector('input[name="sub-antiH"]:checked').value);
+  const antiA1 = targets.includes("A") ? valueOf(document.querySelector('input[name="sub-antiA1"]:checked').value) : null;
+  const results = [];
+  const numericStrength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
+  const antiA = numericStrength(r.antiA), antiB = numericStrength(r.antiB);
+  const aMF = typeof r.antiA === "string" && r.antiA.startsWith("mf");
+  const bMF = typeof r.antiB === "string" && r.antiB.startsWith("mf");
+
+  if (targets.includes("A")) {
+    let suspected;
+    if (antiA1 > 0) suspected = "A₁ 또는 A₁B 유사 성상";
+    else if (antiH >= 2 && antiH <= 3 && antiA >= 3 && !aMF) suspected = "A₂ 또는 A₂B 아형";
+    else if (antiH >= 3 && (aMF || antiA === 2)) suspected = "A₃ 계열 아형";
+    else if (antiH >= 3 && antiA > 0 && antiA <= 1) suspected = "Aₓ 계열 아형";
+    else if (antiH >= 3 && antiA === 0) suspected = "Ael 등 매우 약한 A 아형";
+    else suspected = "A 아형 가능 — 혈청학적 패턴만으로 세부형 미확정";
+    results.push({group:"A", suspected});
+  }
+  if (targets.includes("B")) {
+    let suspected;
+    if (bMF || antiB === 2) suspected = "B₃ 계열 아형";
+    else if (antiB > 0 && antiB <= 1) suspected = "Bₓ 계열 아형";
+    else if (antiB === 0) suspected = "Bel 등 매우 약한 B 아형";
+    else suspected = "B 아형 가능 — 추가 확인 필요";
+    results.push({group:"B", suspected});
+  }
+  const box = document.getElementById("subtypeResult");
+  box.className = "subtype-outcome";
+  box.innerHTML = `<span>SUSPECTED SUBGROUP</span>${results.map(item => `<strong>${item.suspected}</strong>`).join("")}<p>Anti-H 반응만으로 B 아형을 확정할 수 없습니다. Anti-A,B, 흡착·용출, 타액검사 및 ABO 유전형 검사 등 기관 SOP의 확정검사를 시행하세요.</p>`;
 }
 
 function classifyISDiscrepancy(r) {

@@ -202,29 +202,34 @@ function analyzeIS() {
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
       <p>${needsWarm25 ? "Front Typing에서 unexpected present가 확인되어 cold antibody가 의심됩니다. 37℃에서 25분간 방치한 뒤 성상을 다시 판정하세요." : hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요."}</p>
       ${needsWarm25 ? `<div id="warm25Area"></div>` : `<div id="manual15Area"></div>`}`;
-    if (needsWarm25) showWarm25Form();
+    if (needsWarm25) showWarm25Form(r, classification);
     if (needs15Min) showManual15Form();
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
 
-function showWarm25Form() {
+function showWarm25Form(sourceIS, sourceClassification) {
   const area = document.getElementById("warm25Area");
   area.innerHTML = `<div class="manual15-form warm25-form"><div class="is-form-head"><span>03</span><div><strong>37℃ 25분 방치 후 결과</strong><small>Cold antibody 확인 재검</small></div></div>
     ${renderManualGroup("w25", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades)}
     ${renderManualGroup("w25", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades)}
     <button type="button" class="is-analyze-button" id="analyzeWarm25Button">37℃ 결과 재판정 <span>→</span></button><div id="warm25Result"></div></div>`;
-  document.getElementById("analyzeWarm25Button").addEventListener("click", analyzeWarm25);
+  document.getElementById("analyzeWarm25Button").addEventListener("click", () => analyzeWarm25(sourceIS, sourceClassification));
 }
 
-function analyzeWarm25() {
+function analyzeWarm25(sourceIS, sourceClassification) {
   const r = readManualResults("w25");
   const match = findNormalPattern(r);
+  const strength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
+  const unexpectedKeys = sourceClassification.front?.unexpectedKeys || [];
+  const weakenedButPresent = unexpectedKeys.filter(key => strength(r[key]) > 0 && strength(r[key]) < strength(sourceIS[key]));
   const box = document.getElementById("warm25Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   box.innerHTML = match
     ? `<span>RESOLVED</span><strong>37℃ 방치 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
-    : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong><p>ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
+    : weakenedButPresent.length
+      ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong><p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
+      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong><p>ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
 }
 
 function showManual15Form() {
@@ -316,20 +321,23 @@ function classifyISDiscrepancy(r) {
   const normalFor = (p, key, value) => !isMixed(value) && (Array.isArray(p[key]) ? value >= p[key][0] && value <= p[key][1] : value === p[key]);
   const reference = normalPatterns.map(p => ({p, score:keys.filter(key => !normalFor(p, key, r[key])).length})).sort((a,b) => a.score - b.score)[0].p;
   const classifyGroup = (groupName, groupKeys) => {
-    const mixed = [], missingWeak = [], unexpectedPresent = [];
+    const mixed = [], missingWeak = [], unexpectedPresent = [], unexpectedKeys = [];
     groupKeys.forEach(key => {
       const value = r[key];
       if (isMixed(value)) mixed.push(`${names[key]} ${value.slice(2)}+`);
       else if (expectedPositive(reference, key) && !normalFor(reference, key, value)) missingWeak.push(`${names[key]} ${value === 0 ? "소실" : "약화"}`);
-      else if (!expectedPositive(reference, key) && observedPositive(value)) unexpectedPresent.push(`${names[key]} 예상 밖 양성`);
+      else if (!expectedPositive(reference, key) && observedPositive(value)) {
+        unexpectedPresent.push(`${names[key]} 예상 밖 양성`);
+        unexpectedKeys.push(key);
+      }
     });
     const categoryCount = [mixed.length, missingWeak.length, unexpectedPresent.length].filter(Boolean).length;
     if (!categoryCount) return null;
     const prefix = `${groupName} - `;
-    if (categoryCount > 1) return {label:`${prefix}multiple abnormalities`, details:[...mixed, ...missingWeak, ...unexpectedPresent], hasWeakMissing:missingWeak.length > 0, hasUnexpectedPresent:unexpectedPresent.length > 0};
-    if (mixed.length) return {label:`${prefix}mixed field`, details:mixed, hasWeakMissing:false, hasUnexpectedPresent:false};
-    if (unexpectedPresent.length) return {label:`${prefix}present`, details:unexpectedPresent, hasWeakMissing:false, hasUnexpectedPresent:true};
-    return {label:`${prefix}weak/missing`, details:missingWeak, hasWeakMissing:true, hasUnexpectedPresent:false};
+    if (categoryCount > 1) return {label:`${prefix}multiple abnormalities`, details:[...mixed, ...missingWeak, ...unexpectedPresent], hasWeakMissing:missingWeak.length > 0, hasUnexpectedPresent:unexpectedPresent.length > 0, unexpectedKeys};
+    if (mixed.length) return {label:`${prefix}mixed field`, details:mixed, hasWeakMissing:false, hasUnexpectedPresent:false, unexpectedKeys};
+    if (unexpectedPresent.length) return {label:`${prefix}present`, details:unexpectedPresent, hasWeakMissing:false, hasUnexpectedPresent:true, unexpectedKeys};
+    return {label:`${prefix}weak/missing`, details:missingWeak, hasWeakMissing:true, hasUnexpectedPresent:false, unexpectedKeys};
   };
 
   return {

@@ -290,9 +290,11 @@ function analyzeIS() {
     const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
     const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
     const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
+    const hasFrontMixedField = classification.abnormalities.some(item => item.location === "FRONT" && item.type === "MIXED_FIELD");
+    const fifteenMinuteLocations = [classification.front?.hasWeakMissing || hasFrontMixedField ? "FRONT" : null, classification.back?.hasWeakMissing ? "BACK" : null].filter(Boolean);
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
     // 여러 abnormality가 있으면 각 후속 경로를 병렬로 유지한다.
-    const needs15Min = hasWeakMissing;
+    const needs15Min = hasWeakMissing || hasFrontMixedField;
     box.className = "is-outcome unresolved";
     box.dataset.candidateAbo = classification.candidateABO;
     box.dataset.classification = classification.classification;
@@ -308,7 +310,7 @@ function analyzeIS() {
       ${needsWarm25 ? `<div id="warm25Area"></div>` : ""}
       ${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
-    if (needs15Min) showManual15Form();
+    if (needs15Min) showManual15Form(r, fifteenMinuteLocations);
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
@@ -351,7 +353,7 @@ function createUnexpectedRule(analysis, location) {
     abnormalKeys:abnormalities.map(item => item.key),
     abnormalTargets:abnormalities.map(item => item.target),
     suspectedCause:location === "FRONT" ? "Cold interference 의심" : "Unexpected antibody 또는 cold interference 의심",
-    nextAction:location === "FRONT" ? "37℃ 조건 ABO 재검" : "연전 과거력 확인, Ab screening 검사 및 37℃ 조건 ABO 검사",
+    nextAction:location === "FRONT" ? "37℃ 조건 ABO 재검" : "연전 및 과거력 확인, Ab screening 검사 및 37℃ 조건 ABO 검사",
     expectedGroup:analysis.candidateABO
   };
 }
@@ -365,7 +367,7 @@ function analyzeExpectedVsActual(r) {
 }
 
 function renderBackUnexpectedResolution(rule) {
-  return `<div class="back-resolution"><small>BACK UNEXPECTED RESOLUTION</small><strong>${rule.abnormalTargets.join(", ")} unexpected reaction</strong><p>15분 방치는 시행하지 않습니다. 연전 과거력을 확인하고 Ab screening 검사 및 37℃ 조건 ABO 검사를 시행하세요.</p></div>`;
+  return `<div class="back-resolution"><small>BACK UNEXPECTED RESOLUTION</small><strong>${rule.abnormalTargets.join(", ")} unexpected reaction</strong><p>15분 방치는 시행하지 않습니다. 연전 및 과거력을 확인하고 Ab screening 검사 및 37℃ 조건 ABO 검사를 시행하세요.</p></div>`;
 }
 
 function renderAbnormalityPathways(analysis, completedPathway = null) {
@@ -375,7 +377,7 @@ function renderAbnormalityPathways(analysis, completedPathway = null) {
     let action = "기관 SOP에 따른 원인별 resolution을 진행하세요.";
     if (item.type === "MIXED_FIELD") {
       suspected = "서로 다른 적혈구 집단 또는 항원 발현 차이 가능";
-      action = item.location === "FRONT" ? "과거 수혈·이식력을 확인하고 적혈구 세척 재검, 혼합시야 확인 및 필요 시 아형검사를 진행하세요." : "혼합 반응의 재현성과 시약혈구·검체 상태를 확인하세요.";
+      action = item.location === "FRONT" ? (completedPathway === "15MIN" ? "15분 방치 재판정이 완료되었습니다. 수혈·이식력과 혼합 적혈구 집단 가능성을 계속 확인하고 필요 시 아형검사를 진행하세요." : "15분 방치 후 전체 성상을 재입력해 재판정하세요. 수혈·이식력과 혼합 적혈구 집단 가능성을 함께 확인하세요.") : "혼합 반응의 재현성과 시약혈구·검체 상태를 확인하세요.";
     } else if (item.type === "EXPECTED_REACTION_WEAK/MISSING") {
       suspected = "Expected reaction 약화 또는 소실";
       action = completedPathway === "15MIN" ? "15분 방치가 완료되었습니다. 남은 이상에 대한 원인별 추가검사를 진행하세요." : "Manual법 15분 방치 후 전체 성상을 재입력해 재판정하세요.";
@@ -384,7 +386,7 @@ function renderAbnormalityPathways(analysis, completedPathway = null) {
       action = completedPathway === "WARM37" ? "37℃ 조건 ABO 검사가 완료되었습니다. 항체선별검사·자가대조·DAT 등 남은 원인을 확인하세요." : "15분 방치 없이 37℃ 조건 ABO 검사를 진행하세요.";
     } else if (item.type === "UNEXPECTED_REACTION_PRESENT" && item.location === "BACK") {
       suspected = "Unexpected antibody 또는 cold interference 가능성";
-      action = completedPathway === "WARM37" ? "37℃ 조건 ABO 검사가 완료되었습니다. 연전 과거력을 확인하고 Ab screening 검사를 진행하세요." : "15분 방치 없이 연전 과거력 확인, Ab screening 검사 및 37℃ 조건 ABO 검사를 진행하세요.";
+      action = completedPathway === "WARM37" ? "37℃ 조건 ABO 검사가 완료되었습니다. 연전 및 과거력을 확인하고 Ab screening 검사를 진행하세요." : "15분 방치 없이 연전 및 과거력 확인, Ab screening 검사 및 37℃ 조건 ABO 검사를 진행하세요.";
     }
     return `<article class="pathway-card"><small>ABNORMALITY ${index + 1}</small><dl><div><dt>Classification</dt><dd>${item.type}</dd></div><div><dt>Location</dt><dd>${item.location}</dd></div><div><dt>Target</dt><dd>${item.target}</dd></div><div><dt>Expected / Actual</dt><dd>${item.expected} / ${item.actual}</dd></div><div><dt>Suspected Cause</dt><dd>${suspected}</dd></div><div><dt>Resolution Pathway</dt><dd>${action}</dd></div></dl></article>`;
   }).join("")}</div>`;
@@ -415,17 +417,21 @@ function renderCandidateSummary(analysis) {
   return `<div class="candidate-summary"><small>Candidate ABO · 불일치 분석 기준 phenotype</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span><i>최종 ABO 확정 아님</i></div>${renderRhDGuidance(analysis.rhD)}`;
 }
 
-function showManual15Form() {
+function showManual15Form(sourceResults, locations) {
   const area = document.getElementById("manual15Area");
   area.innerHTML = `<div class="manual15-form"><div class="is-form-head"><span>03</span><div><strong>Manual 15분 방치 후 결과</strong><small>15분 후 응집 성상 재판정</small></div></div>
-    ${renderManualGroup("m15", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades)}
-    ${renderManualGroup("m15", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades)}
+    ${locations.includes("FRONT") ? renderManualGroup("m15", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades) : ""}
+    ${locations.includes("BACK") ? renderManualGroup("m15", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades) : ""}
     <button type="button" class="is-analyze-button" id="analyze15MinButton">15분 결과 재판정 <span>→</span></button><div id="manual15Result"></div></div>`;
-  document.getElementById("analyze15MinButton").addEventListener("click", analyzeManual15);
+  document.getElementById("analyze15MinButton").addEventListener("click", () => analyzeManual15(sourceResults));
 }
 
-function analyzeManual15() {
-  const r = readManualResults("m15");
+function analyzeManual15(sourceResults) {
+  const r = Object.fromEntries(tests.map(test => {
+    const selected = document.querySelector(`input[name="m15-${test.id}"]:checked`);
+    if (!selected) return [test.id,sourceResults[test.id]];
+    return [test.id,selected.value.startsWith("mf") ? selected.value : valueOf(selected.value)];
+  }));
   const reanalysis = analyzeExpectedVsActual(r);
   const classification = reanalysis.generic;
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;

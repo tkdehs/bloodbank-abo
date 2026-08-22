@@ -148,7 +148,7 @@ function buildAnalysis(r) {
     reverse: reverseApplicable ? reverse : "판정 제외",
     rh: normalPattern ? `Rh${normalPattern.rh}` : r.antiD === 4 ? "Rh+ 추정" : r.antiD === 0 ? "Rh− 추정" : "RhD 비정상 반응",
     finalType: normalPattern ? `Rh${normalPattern.rh} ${normalPattern.type}형` : null,
-    discrepancy, aboDiscrepancy, weakD, antiDReview:r.antiD < 4, hasPreviousResult:Boolean(previous), causes:[...new Set(causes)], steps
+    discrepancy, aboDiscrepancy, weakD, antiDValue:r.antiD, antiDReview:r.antiD < 4, hasPreviousResult:Boolean(previous), causes:[...new Set(causes)], steps
   };
 }
 
@@ -170,7 +170,7 @@ function showResult(a) {
     <div class="workflow"><h3>권장 확인검사 순서</h3><ol>${a.steps.map((s,i) => `<li data-step="${String(i+1).padStart(2,"0")}">${s}</li>`).join("")}</ol></div>
     <p class="warning">이 결과는 입력값 기반의 규칙형 안내이며 진단이나 최종 혈액형 판정이 아닙니다. 검사법·시약 제조사 지침·기관 SOP가 우선합니다.</p>`;
   if (a.aboDiscrepancy) document.getElementById("startIsButton").addEventListener("click", showISForm);
-  if (a.antiDReview && !a.aboDiscrepancy && !a.hasPreviousResult) document.getElementById("startWeakDButton").addEventListener("click", showWeakDForm);
+  if (a.antiDReview && !a.aboDiscrepancy && !a.hasPreviousResult) document.getElementById("startWeakDButton").addEventListener("click", () => showWeakDForm(a.antiDValue));
   if (window.innerWidth < 980) document.querySelector(".result-panel").scrollIntoView({behavior:"smooth", block:"start"});
 }
 
@@ -190,29 +190,31 @@ function weakDGradeSelect(name, label) {
   return `<label class="weak-d-select"><span>${label}</span><select name="${name}">${grades.map(grade => `<option value="${grade}">${grade}</option>`).join("")}</select></label>`;
 }
 
-function showWeakDForm() {
+function showWeakDForm(antiDValue) {
+  const includePlateAndDAT = antiDValue >= 0.5;
+  const methods = includePlateAndDAT ? ["Plate법","Tube법","IAT"] : ["Tube법","IAT"];
   const area = document.getElementById("weakDArea");
   area.innerHTML = `<div class="is-form weak-d-form"><div class="is-form-head"><span>02</span><div><strong>Weak D 검사 결과</strong><small>과거 결과가 없는 Anti-D 4+ 미만 검체</small></div></div>
-    <div class="weak-d-section"><h3>Testing for Weak D</h3><div class="weak-d-table" role="table" aria-label="Weak D 검사 결과">
-      <div class="weak-d-head">Anti-D Reagents</div><div class="weak-d-head">Tube법</div><div class="weak-d-head">IAT</div>
-      ${["Ortho","SHIDIA","Control"].map(reagent => `<div class="weak-d-reagent">${reagent}</div>${weakDGradeSelect(`weakd-${reagent.toLowerCase()}-tube`, "Tube법")}${weakDGradeSelect(`weakd-${reagent.toLowerCase()}-iat`, "IAT")}`).join("")}
+    <div class="weak-d-section"><h3>Testing for Weak D</h3><div class="weak-d-table ${includePlateAndDAT ? "four-columns" : "three-columns"}" role="table" aria-label="Weak D 검사 결과">
+      <div class="weak-d-head">Anti-D Reagents</div>${methods.map(method => `<div class="weak-d-head">${method}</div>`).join("")}
+      ${["Ortho","SHIDIA","Control"].map(reagent => `<div class="weak-d-reagent">${reagent}</div>${methods.map(method => weakDGradeSelect(`weakd-${reagent.toLowerCase()}-${method === "Plate법" ? "plate" : method === "Tube법" ? "tube" : "iat"}`, method)).join("")}`).join("")}
     </div></div>
     <div class="weak-d-section"><h3>Rh Subtyping</h3><div class="rh-subtyping-grid">${["Anti-C","Anti-E","Anti-c","Anti-e"].map((reagent, index) => weakDGradeSelect(`rh-sub-${index}`, reagent)).join("")}</div></div>
-    <div class="weak-d-section"><h3>DAT 검사 결과</h3><div class="dat-options">${["Negative","Weak positive","Positive"].map((result, index) => `<input type="radio" id="dat-${index}" name="dat-result" value="${result}" ${index === 0 ? "checked" : ""}><label for="dat-${index}">${result}</label>`).join("")}</div></div>
+    ${includePlateAndDAT ? `<div class="weak-d-section"><h3>DAT 검사 결과</h3><div class="dat-options">${["Negative","Weak positive","Positive"].map((result, index) => `<input type="radio" id="dat-${index}" name="dat-result" value="${result}" ${index === 0 ? "checked" : ""}><label for="dat-${index}">${result}</label>`).join("")}</div></div>` : ""}
     <button type="button" class="is-analyze-button" id="saveWeakDButton">Weak D 검사 결과 확인 <span>→</span></button><div id="weakDResult"></div></div>`;
   document.getElementById("startWeakDButton").hidden = true;
-  document.getElementById("saveWeakDButton").addEventListener("click", summarizeWeakDResults);
+  document.getElementById("saveWeakDButton").addEventListener("click", () => summarizeWeakDResults(includePlateAndDAT));
   area.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
 
-function summarizeWeakDResults() {
+function summarizeWeakDResults(includePlateAndDAT) {
   const value = name => document.querySelector(`[name="${name}"]`).value;
-  const tableRows = ["ortho","shidia","control"].map(reagent => `${reagent.toUpperCase()}: Tube ${value(`weakd-${reagent}-tube`)} / IAT ${value(`weakd-${reagent}-iat`)}`);
+  const tableRows = ["ortho","shidia","control"].map(reagent => `${reagent.toUpperCase()}: ${includePlateAndDAT ? `Plate ${value(`weakd-${reagent}-plate`)} / ` : ""}Tube ${value(`weakd-${reagent}-tube`)} / IAT ${value(`weakd-${reagent}-iat`)}`);
   const rhResults = ["Anti-C","Anti-E","Anti-c","Anti-e"].map((name,index) => `${name} ${value(`rh-sub-${index}`)}`);
-  const dat = document.querySelector('[name="dat-result"]:checked').value;
+  const dat = includePlateAndDAT ? document.querySelector('[name="dat-result"]:checked').value : null;
   const box = document.getElementById("weakDResult");
   box.className = "is-outcome unresolved";
-  box.innerHTML = `<span>WEAK D TEST RECORDED</span><strong>Weak D 관련 검사 결과가 입력되었습니다.</strong><p>${tableRows.join(" · ")}<br>${rhResults.join(" · ")}<br>DAT: ${dat}</p><p>결과 해석과 RhD 확정은 시약 제조사 지침 및 기관 SOP에 따라 수행하세요.</p>`;
+  box.innerHTML = `<span>WEAK D TEST RECORDED</span><strong>Weak D 관련 검사 결과가 입력되었습니다.</strong><p>${tableRows.join(" · ")}<br>${rhResults.join(" · ")}${dat ? `<br>DAT: ${dat}` : ""}</p><p>결과 해석과 RhD 확정은 시약 제조사 지침 및 기관 SOP에 따라 수행하세요.</p>`;
 }
 
 function renderManualGroup(prefix, title, subtitle, groupTests, manualGrades) {

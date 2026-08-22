@@ -288,7 +288,6 @@ function analyzeIS() {
     box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}<p>초기 ABO 불일치가 수기법 IS 재검에서 해소되었습니다. RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
   } else {
     const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
-    const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
     const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
     const hasFrontMixedField = classification.abnormalities.some(item => item.location === "FRONT" && item.type === "MIXED_FIELD");
     const fifteenMinuteLocations = [classification.front?.hasWeakMissing || hasFrontMixedField ? "FRONT" : null, classification.back?.hasWeakMissing ? "BACK" : null].filter(Boolean);
@@ -375,12 +374,17 @@ function renderAbnormalityPathways(analysis, completedPathway = null) {
   return `<div class="parallel-pathways"><div class="parallel-pathways-head"><small>INDEPENDENT RESOLUTION PATHWAYS</small><strong>${analysis.abnormalities.length}개 abnormality를 각각 추적합니다.</strong></div>${analysis.abnormalities.map((item,index) => {
     let suspected = "원인별 추가 확인 필요";
     let action = "기관 SOP에 따른 원인별 resolution을 진행하세요.";
+    const subgroupAction = item.key === "antiA" && (analysis.candidateABO === "A" || analysis.candidateABO === "AB")
+      ? "A₁ lectin과 H 검사를 진행하세요."
+      : item.key === "antiB" && (analysis.candidateABO === "B" || analysis.candidateABO === "AB")
+        ? "H 검사를 진행하세요."
+        : "원인별 추가검사를 진행하세요.";
     if (item.type === "MIXED_FIELD") {
       suspected = "서로 다른 적혈구 집단 또는 항원 발현 차이 가능";
-      action = item.location === "FRONT" ? (completedPathway === "15MIN" ? "15분 방치 재판정이 완료되었습니다. 수혈·이식력과 혼합 적혈구 집단 가능성을 계속 확인하고 필요 시 아형검사를 진행하세요." : "15분 방치 후 전체 성상을 재입력해 재판정하세요. 수혈·이식력과 혼합 적혈구 집단 가능성을 함께 확인하세요.") : "혼합 반응의 재현성과 시약혈구·검체 상태를 확인하세요.";
+      action = item.location === "FRONT" ? (completedPathway === "15MIN" ? `15분 후에도 MF가 지속됩니다. 수혈·이식력과 혼합 적혈구 집단 가능성을 계속 확인하고 ${subgroupAction}` : "15분 방치 후 전체 성상을 재입력해 재판정하세요. 수혈·이식력과 혼합 적혈구 집단 가능성을 함께 확인하세요.") : "혼합 반응의 재현성과 시약혈구·검체 상태를 확인하세요.";
     } else if (item.type === "EXPECTED_REACTION_WEAK/MISSING") {
       suspected = "Expected reaction 약화 또는 소실";
-      action = completedPathway === "15MIN" ? "15분 방치가 완료되었습니다. 남은 이상에 대한 원인별 추가검사를 진행하세요." : "Manual법 15분 방치 후 전체 성상을 재입력해 재판정하세요.";
+      action = completedPathway === "15MIN" && item.location === "FRONT" ? `15분 후에도 Front reaction이 정상 기준에 도달하지 않았습니다. ${subgroupAction}` : completedPathway === "15MIN" ? "15분 방치가 완료되었습니다. 남은 이상에 대한 원인별 추가검사를 진행하세요." : "Manual법 15분 방치 후 전체 성상을 재입력해 재판정하세요.";
     } else if (item.type === "UNEXPECTED_REACTION_PRESENT" && item.location === "FRONT") {
       suspected = "Cold interference 가능성 — 확정 아님";
       action = completedPathway === "WARM37" ? "37℃ 조건 ABO 검사가 완료되었습니다. 항체선별검사·자가대조·DAT 등 남은 원인을 확인하세요." : "15분 방치 없이 37℃ 조건 ABO 검사를 진행하세요.";
@@ -436,8 +440,7 @@ function analyzeManual15(sourceResults) {
   const classification = reanalysis.generic;
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const frontUnexpectedRule = match ? null : createUnexpectedRule(classification, "FRONT");
-  const backUnexpectedRule = match ? null : createUnexpectedRule(classification, "BACK");
-  const subtypeTargets = match || frontUnexpectedRule || backUnexpectedRule ? [] : detectSubtypeTargets(r, classification);
+  const subtypeTargets = match ? [] : detectSubtypeTargets(classification);
   const box = document.getElementById("manual15Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   box.innerHTML = match
@@ -447,14 +450,14 @@ function analyzeManual15(sourceResults) {
   if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r);
 }
 
-function detectSubtypeTargets(r, classification) {
-  if (!classification?.front) return [];
-  const mixed = value => typeof value === "string" && value.startsWith("mf");
-  const positive = value => mixed(value) || value > 0;
-  const aReversePattern = r.a1cell === 0 && positive(r.bcell);
-  const bReversePattern = positive(r.a1cell) && r.bcell === 0;
-  const aSuspected = mixed(r.antiA) || (aReversePattern && r.antiA !== 4) || (positive(r.antiA) && r.antiA !== 4);
-  const bSuspected = mixed(r.antiB) || (bReversePattern && r.antiB !== 4) || (positive(r.antiB) && r.antiB !== 4);
+function detectSubtypeTargets(classification) {
+  if (!classification?.front || classification.candidateABO === "CANDIDATE_AMBIGUOUS") return [];
+  const subgroupAbnormalities = classification.abnormalities.filter(item =>
+    item.location === "FRONT" && (item.type === "EXPECTED_REACTION_WEAK/MISSING" || item.type === "MIXED_FIELD")
+  );
+  const candidate = classification.candidateABO;
+  const aSuspected = (candidate === "A" || candidate === "AB") && subgroupAbnormalities.some(item => item.key === "antiA");
+  const bSuspected = (candidate === "B" || candidate === "AB") && subgroupAbnormalities.some(item => item.key === "antiB");
   return [aSuspected ? "A" : null, bSuspected ? "B" : null].filter(Boolean);
 }
 

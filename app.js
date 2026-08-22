@@ -138,7 +138,7 @@ function buildAnalysis(r) {
     reverse: reverseApplicable ? reverse : "판정 제외",
     rh: normalPattern ? `Rh${normalPattern.rh}` : r.antiD === 4 ? "Rh+ 추정" : r.antiD === 0 ? "Rh− 추정" : "RhD 비정상 반응",
     finalType: normalPattern ? `Rh${normalPattern.rh} ${normalPattern.type}형` : null,
-    discrepancy, weakD, causes:[...new Set(causes)], steps
+    discrepancy, weakD, antiDReview:r.antiD < 4, causes:[...new Set(causes)], steps
   };
 }
 
@@ -151,6 +151,7 @@ function showResult(a) {
   el.innerHTML = `<span class="status-chip ${a.discrepancy ? "" : "ok"}"><i></i>${a.discrepancy ? "DISCREPANCY" : "CONSISTENT"}</span>
     <h2 class="result-title">${status}</h2><p class="result-subtitle">${subtitle}</p>
     <div class="type-summary"><div class="type-box"><small>${a.finalType ? "최종 패턴" : "정형검사 추정"}</small><strong>${a.finalType || `${a.forward}형 · ${a.rh}`}</strong></div><div class="type-box"><small>역형검사 추정</small><strong>${a.reverse}${a.reverse === "판정 제외" ? "" : "형"}</strong></div></div>
+    ${a.antiDReview ? renderRhDGuidance({needsHistoryReview:true}) : ""}
     ${a.discrepancy ? `<div class="is-callout"><div><small>NEXT STEP · MANUAL IS</small><strong>수기법 IS로 재검하세요</strong><p>재검 후 관찰한 성상을 다시 입력해 불일치 해소 여부를 확인합니다.</p></div><button type="button" id="startIsButton">IS 재검 입력 <span>→</span></button></div>` : ""}
     <div id="isArea"></div>
     <div class="cause-box"><h3>가능성이 있는 항목</h3><div class="cause-list">${a.causes.map(c => `<span>${c}</span>`).join("")}</div></div>
@@ -238,11 +239,12 @@ function analyzeWarm25(sourceIS, sourceClassification) {
   const box = document.getElementById("warm25Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   const comparison = renderExpectedActual(reanalysis);
+  const rhDGuidance = renderRhDGuidance(reanalysis.generic.rhD);
   box.innerHTML = match
-    ? `<span>RESOLVED</span><strong>37℃ 방치 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${comparison}<p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
+    ? `<span>RESOLVED</span><strong>37℃ 방치 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${comparison}${rhDGuidance}<p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
     : weakenedButPresent.length
-      ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong>${comparison}<p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
-      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected) : ""}${comparison}<p>새 결과 전체를 다시 분석했습니다. ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
+      ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong>${comparison}${rhDGuidance}<p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
+      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected) : ""}${comparison}${rhDGuidance}<p>새 결과 전체를 다시 분석했습니다. ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
 }
 
 function createUnexpectedRule(analysis, location) {
@@ -294,7 +296,7 @@ function renderExpectedActual(result) {
 function renderCandidateSummary(analysis) {
   const candidate = analysis.candidateABO;
   const tied = candidate === "CANDIDATE_AMBIGUOUS" ? `<em>동률: ${analysis.tiedCandidates.join(", ")}</em>` : "";
-  return `<div class="candidate-summary"><small>Candidate ABO</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span></div>`;
+  return `<div class="candidate-summary"><small>Candidate ABO</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span></div>${renderRhDGuidance(analysis.rhD)}`;
 }
 
 function showManual15Form() {
@@ -414,9 +416,14 @@ function estimateCandidateABO(r) {
 }
 
 function analyzeRhD(value) {
-  if (value === 4) return {status:"NORMAL",label:"Rh+"};
-  if (value === 0) return {status:"NORMAL",label:"Rh−"};
-  return {status:"ABNORMAL",label:`RhD 약/비정상 반응 ${displayReaction(value)}`};
+  if (value === 4) return {status:"NORMAL",label:"Rh+",needsHistoryReview:false};
+  if (value === 0) return {status:"NORMAL",label:"Rh−",needsHistoryReview:true};
+  return {status:"ABNORMAL",label:`RhD 약/비정상 반응 ${displayReaction(value)}`,needsHistoryReview:true};
+}
+
+function renderRhDGuidance(rhD) {
+  if (!rhD?.needsHistoryReview) return "";
+  return `<div class="rhd-guidance"><small>ANTI-D RESULT REVIEW</small><strong>Anti-D 결과가 4+ 미만입니다.</strong><p>과거 검사 결과와 과거 수혈력을 확인하세요.</p></div>`;
 }
 
 function normalCandidateResult(analysis, r) {

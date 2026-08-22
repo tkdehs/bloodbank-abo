@@ -291,9 +291,8 @@ function analyzeIS() {
     const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
     const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
-    const hasUnexpectedPresent = Boolean(frontUnexpectedRule || backUnexpectedRule);
-    // Unexpected present는 위치와 관계없이 15분 방치를 건너뛴다.
-    const needs15Min = !hasUnexpectedPresent;
+    // 여러 abnormality가 있으면 각 후속 경로를 병렬로 유지한다.
+    const needs15Min = hasWeakMissing;
     box.className = "is-outcome unresolved";
     box.dataset.candidateAbo = classification.candidateABO;
     box.dataset.classification = classification.classification;
@@ -303,11 +302,11 @@ function analyzeIS() {
     box.dataset.backClassification = classification.back?.label || "normal";
     box.dataset.suspectedCause = frontUnexpectedRule?.suspectedCause || "";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
-      <p>${needsWarm25 ? "Front Typing에서 unexpected present가 확인되어 cold antibody가 의심됩니다. 15분 방치를 건너뛰고 37℃ 조건 재검으로 이동합니다." : backUnexpectedRule ? "Back Typing에서 unexpected present가 확인되었습니다. 15분 방치를 건너뛰고 Back unexpected resolution pathway로 이동합니다." : hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. 기존 resolution pathway를 진행하세요."}</p>
+      <p>발견된 abnormality마다 독립된 resolution pathway를 병렬로 진행하세요. 모든 이상이 해결된 경우에만 RESOLVED로 재평가합니다.</p>
       ${renderCandidateSummary(classification)}
-      ${frontUnexpectedRule ? renderDecisionSummary(frontUnexpectedRule) : ""}
-      ${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule) : ""}
-      ${needsWarm25 ? `<div id="warm25Area"></div>` : needs15Min ? `<div id="manual15Area"></div>` : ""}`;
+      ${renderAbnormalityPathways(classification)}
+      ${needsWarm25 ? `<div id="warm25Area"></div>` : ""}
+      ${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
     if (needs15Min) showManual15Form();
   }
@@ -334,11 +333,12 @@ function analyzeWarm25(sourceIS, sourceClassification) {
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   const comparison = renderExpectedActual(reanalysis);
   const rhDGuidance = renderRhDGuidance(reanalysis.generic.rhD);
+  const remainingPathways = renderAbnormalityPathways(reanalysis.generic, "WARM37");
   box.innerHTML = match
     ? `<span>RESOLVED</span><strong>37℃ 방치 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${comparison}${rhDGuidance}<p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
     : weakenedButPresent.length
-      ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong>${comparison}${rhDGuidance}<p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
-      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected, false) : ""}${comparison}${rhDGuidance}<p>ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 원인별 추가검사를 진행하세요.</p>`;
+      ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong>${comparison}${rhDGuidance}${remainingPathways}<p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
+      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${comparison}${rhDGuidance}${remainingPathways}<p>남은 abnormality가 있어 전체 상태를 UNRESOLVED로 유지합니다. ABO/RhD형을 확정하지 말고 원인별 추가검사를 진행하세요.</p>`;
 }
 
 function createUnexpectedRule(analysis, location) {
@@ -366,6 +366,28 @@ function analyzeExpectedVsActual(r) {
 
 function renderBackUnexpectedResolution(rule) {
   return `<div class="back-resolution"><small>BACK UNEXPECTED RESOLUTION</small><strong>${rule.abnormalTargets.join(", ")} unexpected reaction</strong><p>15분 방치는 시행하지 않습니다. 연전 과거력을 확인하고 Ab screening 검사 및 37℃ 조건 ABO 검사를 시행하세요.</p></div>`;
+}
+
+function renderAbnormalityPathways(analysis, completedPathway = null) {
+  if (!analysis?.abnormalities?.length) return "";
+  return `<div class="parallel-pathways"><div class="parallel-pathways-head"><small>INDEPENDENT RESOLUTION PATHWAYS</small><strong>${analysis.abnormalities.length}개 abnormality를 각각 추적합니다.</strong></div>${analysis.abnormalities.map((item,index) => {
+    let suspected = "원인별 추가 확인 필요";
+    let action = "기관 SOP에 따른 원인별 resolution을 진행하세요.";
+    if (item.type === "MIXED_FIELD") {
+      suspected = "서로 다른 적혈구 집단 또는 항원 발현 차이 가능";
+      action = item.location === "FRONT" ? "과거 수혈·이식력을 확인하고 적혈구 세척 재검, 혼합시야 확인 및 필요 시 아형검사를 진행하세요." : "혼합 반응의 재현성과 시약혈구·검체 상태를 확인하세요.";
+    } else if (item.type === "EXPECTED_REACTION_WEAK/MISSING") {
+      suspected = "Expected reaction 약화 또는 소실";
+      action = completedPathway === "15MIN" ? "15분 방치가 완료되었습니다. 남은 이상에 대한 원인별 추가검사를 진행하세요." : "Manual법 15분 방치 후 전체 성상을 재입력해 재판정하세요.";
+    } else if (item.type === "UNEXPECTED_REACTION_PRESENT" && item.location === "FRONT") {
+      suspected = "Cold interference 가능성 — 확정 아님";
+      action = completedPathway === "WARM37" ? "37℃ 조건 ABO 검사가 완료되었습니다. 항체선별검사·자가대조·DAT 등 남은 원인을 확인하세요." : "15분 방치 없이 37℃ 조건 ABO 검사를 진행하세요.";
+    } else if (item.type === "UNEXPECTED_REACTION_PRESENT" && item.location === "BACK") {
+      suspected = "Unexpected antibody 또는 cold interference 가능성";
+      action = completedPathway === "WARM37" ? "37℃ 조건 ABO 검사가 완료되었습니다. 연전 과거력을 확인하고 Ab screening 검사를 진행하세요." : "15분 방치 없이 연전 과거력 확인, Ab screening 검사 및 37℃ 조건 ABO 검사를 진행하세요.";
+    }
+    return `<article class="pathway-card"><small>ABNORMALITY ${index + 1}</small><dl><div><dt>Classification</dt><dd>${item.type}</dd></div><div><dt>Location</dt><dd>${item.location}</dd></div><div><dt>Target</dt><dd>${item.target}</dd></div><div><dt>Expected / Actual</dt><dd>${item.expected} / ${item.actual}</dd></div><div><dt>Suspected Cause</dt><dd>${suspected}</dd></div><div><dt>Resolution Pathway</dt><dd>${action}</dd></div></dl></article>`;
+  }).join("")}</div>`;
 }
 
 function displayReaction(value) {
@@ -414,7 +436,7 @@ function analyzeManual15() {
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   box.innerHTML = match
     ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
-    : `<span>REANALYZED</span><strong>15분 후 결과를 Candidate ABO부터 다시 분석했습니다.</strong>${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${frontUnexpectedRule ? renderDecisionSummary(frontUnexpectedRule) : ""}${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule) : ""}<p>${frontUnexpectedRule ? "새 결과가 Front unexpected present로 분류되어 37℃ resolution으로 이동합니다." : backUnexpectedRule ? "새 결과가 Back unexpected present로 분류되어 전용 resolution으로 이동합니다." : subtypeTargets.length ? "Front Typing 이상이 지속되어 ABO 아형검사가 필요합니다." : "불일치가 지속되어 원인별 추가검사가 필요합니다."}</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
+    : `<span>REANALYZED</span><strong>15분 후 결과를 Candidate ABO부터 다시 분석했습니다.</strong>${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${renderAbnormalityPathways(classification, "15MIN")}<p>한쪽 pathway가 해결되어도 남은 abnormality가 있어 전체 상태를 UNRESOLVED로 유지합니다.</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
   if (frontUnexpectedRule) showWarm25Form(r, {...classification,front:{...classification.front,unexpectedKeys:frontUnexpectedRule.abnormalKeys}});
   if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r);
 }

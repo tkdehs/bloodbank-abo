@@ -185,24 +185,29 @@ function readManualResults(prefix) {
 
 function analyzeIS() {
   const r = readManualResults("is");
-  const match = findNormalPattern(r);
+  const classification = classifyISDiscrepancy(r);
+  const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const box = document.getElementById("isResult");
   if (match) {
     box.className = "is-outcome resolved";
-    box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>초기 불일치가 수기법 IS 재검에서 해소되었습니다. 이전 결과와 비교하고 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
+    box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}<p>초기 ABO 불일치가 수기법 IS 재검에서 해소되었습니다. RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
   } else {
-    const classification = classifyISDiscrepancy(r);
-    const frontUnexpectedRule = classifyFrontUnexpectedByBack(r);
+    const frontUnexpectedRule = createFrontUnexpectedRule(classification);
     const hasWeakMissing = [classification.front, classification.back].some(item => item?.hasWeakMissing);
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
     // Front unexpected present는 37℃ 재검을 우선하고, 그 외 미해결 결과는 15분 방치 재검으로 진행한다.
     const needs15Min = !needsWarm25;
     box.className = "is-outcome unresolved";
+    box.dataset.candidateAbo = classification.candidateABO;
+    box.dataset.classification = classification.classification;
+    box.dataset.location = classification.location || "";
+    box.dataset.analysis = JSON.stringify({candidateABO:classification.candidateABO,classification:classification.classification,location:classification.location,abnormalities:classification.abnormalities,rhD:classification.rhD});
     box.dataset.frontClassification = frontUnexpectedRule?.classification || classification.front?.label || "normal";
     box.dataset.backClassification = classification.back?.label || "normal";
     box.dataset.suspectedCause = frontUnexpectedRule?.suspectedCause || "";
     box.innerHTML = `<span>UNRESOLVED</span><strong>IS 재검에서도 불일치가 지속됩니다.</strong>
       <p>${needsWarm25 ? "Front Typing에서 unexpected present가 확인되어 cold antibody가 의심됩니다. 37℃에서 25분간 방치한 뒤 성상을 다시 판정하세요." : hasWeakMissing ? "Weak/missing 반응이 확인되었습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요." : "불일치가 해소되지 않았습니다. Manual법으로 15분간 방치한 뒤 성상을 다시 판정하세요."}</p>
+      ${renderCandidateSummary(classification)}
       ${frontUnexpectedRule ? renderDecisionSummary(frontUnexpectedRule) : ""}
       ${needsWarm25 ? `<div id="warm25Area"></div>` : `<div id="manual15Area"></div>`}`;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
@@ -231,49 +236,33 @@ function analyzeWarm25(sourceIS, sourceClassification) {
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   const comparison = renderExpectedActual(reanalysis);
   box.innerHTML = match
-    ? `<span>RESOLVED</span><strong>37℃ 방치 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong>${comparison}<p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
+    ? `<span>RESOLVED</span><strong>37℃ 방치 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${comparison}<p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
     : weakenedButPresent.length
       ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong>${comparison}<p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
       : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected) : ""}${comparison}<p>새 결과 전체를 다시 분석했습니다. ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
 }
 
-function classifyFrontUnexpectedByBack(r) {
-  const positive = value => typeof value === "string" ? value.startsWith("mf") : value > 0;
-  let expectedGroup = null;
-  if (r.a1cell >= 2 && r.bcell >= 2) expectedGroup = "O";
-  else if (r.a1cell === 0 && r.bcell >= 2) expectedGroup = "A";
-  else if (r.a1cell >= 2 && r.bcell === 0) expectedGroup = "B";
-  else if (r.a1cell === 0 && r.bcell === 0) expectedGroup = "AB";
-  if (!expectedGroup) return null;
-  const expected = {
-    O:{antiA:0,antiB:0}, A:{antiA:4,antiB:0},
-    B:{antiA:0,antiB:4}, AB:{antiA:4,antiB:4}
-  }[expectedGroup];
-  const abnormalKeys = ["antiA","antiB"].filter(key => expected[key] === 0 && positive(r[key]));
-  if (!abnormalKeys.length) return null;
+function createFrontUnexpectedRule(analysis) {
+  if (analysis.candidateABO === "CANDIDATE_AMBIGUOUS") return null;
+  const abnormalities = analysis.abnormalities.filter(item => item.location === "FRONT" && item.type === "UNEXPECTED_REACTION_PRESENT");
+  if (!abnormalities.length) return null;
   return {
     classification:"UNEXPECTED_REACTION_PRESENT",
     location:"FRONT",
-    abnormalKeys,
-    abnormalTargets:abnormalKeys.map(key => tests.find(test => test.id === key)?.name),
+    abnormalKeys:abnormalities.map(item => item.key),
+    abnormalTargets:abnormalities.map(item => item.target),
     suspectedCause:"Cold interference 의심",
     nextAction:"37℃ 조건 ABO 재검",
-    expectedGroup
+    expectedGroup:analysis.candidateABO
   };
 }
 
 function analyzeExpectedVsActual(r) {
-  const normalPattern = findNormalPattern(r);
-  const frontUnexpected = classifyFrontUnexpectedByBack(r);
-  const generic = normalPattern ? null : classifyISDiscrepancy(r);
-  const group = frontUnexpected?.expectedGroup || normalPattern?.type || generic?.reference?.match(/ (A|B|AB|O)형$/)?.[1] || null;
-  const expectedMap = group ? {
-    O:{antiA:"0",antiB:"0",a1cell:"≥2+",bcell:"≥2+"},
-    A:{antiA:"4+",antiB:"0",a1cell:"0",bcell:"≥2+"},
-    B:{antiA:"0",antiB:"4+",a1cell:"≥2+",bcell:"0"},
-    AB:{antiA:"4+",antiB:"4+",a1cell:"0",bcell:"0"}
-  }[group] : null;
-  return {normalPattern, frontUnexpected, generic, group, expectedMap, actual:r};
+  const generic = classifyISDiscrepancy(r);
+  const frontUnexpected = createFrontUnexpectedRule(generic);
+  const group = generic.candidateABO === "CANDIDATE_AMBIGUOUS" ? null : generic.candidateABO;
+  const normalPattern = generic.classification === "NORMAL" ? normalCandidateResult(generic, r) : null;
+  return {normalPattern, frontUnexpected, generic, group, expectedMap:generic.expectedPattern, actual:r};
 }
 
 function displayReaction(value) {
@@ -295,6 +284,12 @@ function renderExpectedActual(result) {
   return `<div class="comparison-box"><div class="comparison-title">Expected vs Actual · ${result.group}형 기준</div>${rows.map(([name,expected,actual]) => `<div><span>${name}</span><b>${expected}</b><em>${displayReaction(actual)}</em></div>`).join("")}</div>`;
 }
 
+function renderCandidateSummary(analysis) {
+  const candidate = analysis.candidateABO;
+  const tied = candidate === "CANDIDATE_AMBIGUOUS" ? `<em>동률: ${analysis.tiedCandidates.join(", ")}</em>` : "";
+  return `<div class="candidate-summary"><small>Candidate ABO</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span></div>`;
+}
+
 function showManual15Form() {
   const area = document.getElementById("manual15Area");
   area.innerHTML = `<div class="manual15-form"><div class="is-form-head"><span>03</span><div><strong>Manual 15분 방치 후 결과</strong><small>15분 후 응집 성상 재판정</small></div></div>
@@ -306,13 +301,13 @@ function showManual15Form() {
 
 function analyzeManual15() {
   const r = readManualResults("m15");
-  const match = findNormalPattern(r);
-  const classification = match ? null : classifyISDiscrepancy(r);
+  const classification = classifyISDiscrepancy(r);
+  const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const subtypeTargets = match ? [] : detectSubtypeTargets(r, classification);
   const box = document.getElementById("manual15Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   box.innerHTML = match
-    ? `<span>RESOLVED</span><strong>15분 후 Rh${match.rh} ${match.type}형 정상 성상입니다.</strong><p>기관 SOP에 따라 최종 검증·보고하세요.</p>`
+    ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
     : `<span>UNRESOLVED</span><strong>15분 방치 후에도 불일치가 지속됩니다.</strong><p>${subtypeTargets.length ? "Front Typing 이상이 지속되어 ABO 아형검사가 필요합니다." : "ABO/RhD형을 확정하지 말고 원인별 추가검사를 진행하세요."}</p>${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
   if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r);
 }
@@ -373,41 +368,84 @@ function analyzeSubtype(targets, r) {
   box.innerHTML = `<span>SUSPECTED SUBGROUP</span>${results.map(item => `<strong>${item.suspected}</strong>`).join("")}<p>Anti-H 반응만으로 B 아형을 확정할 수 없습니다. Anti-A,B, 흡착·용출, 타액검사 및 ABO 유전형 검사 등 기관 SOP의 확정검사를 시행하세요.</p>`;
 }
 
-function classifyISDiscrepancy(r) {
-  const keys = ["antiA", "antiB", "antiD", "a1cell", "bcell"];
-  const frontKeys = ["antiA", "antiB", "antiD"];
-  const backKeys = ["a1cell", "bcell"];
-  const names = {antiA:"Anti-A", antiB:"Anti-B", antiD:"Anti-D", a1cell:"A₁ cell", bcell:"B cell"};
-  const isMixed = value => typeof value === "string" && value.startsWith("mf");
-  const expectedPositive = (p, key) => Array.isArray(p[key]) ? p[key][0] >= 2 : p[key] === 4;
-  const observedPositive = value => isMixed(value) || value > 0;
-  const normalFor = (p, key, value) => !isMixed(value) && (Array.isArray(p[key]) ? value >= p[key][0] && value <= p[key][1] : value === p[key]);
-  const reference = normalPatterns.map(p => ({p, score:keys.filter(key => !normalFor(p, key, r[key])).length})).sort((a,b) => a.score - b.score)[0].p;
-  const classifyGroup = (groupName, groupKeys) => {
-    const mixed = [], missingWeak = [], unexpectedPresent = [], unexpectedKeys = [];
-    groupKeys.forEach(key => {
-      const value = r[key];
-      if (isMixed(value)) mixed.push(`${names[key]} ${value.slice(2)}+`);
-      else if (expectedPositive(reference, key) && !normalFor(reference, key, value)) missingWeak.push(`${names[key]} ${value === 0 ? "소실" : "약화"}`);
-      else if (!expectedPositive(reference, key) && observedPositive(value)) {
-        unexpectedPresent.push(`${names[key]} 예상 밖 양성`);
-        unexpectedKeys.push(key);
-      }
-    });
-    const categoryCount = [mixed.length, missingWeak.length, unexpectedPresent.length].filter(Boolean).length;
-    if (!categoryCount) return null;
-    const prefix = `${groupName} - `;
-    if (categoryCount > 1) return {label:`${prefix}multiple abnormalities`, details:[...mixed, ...missingWeak, ...unexpectedPresent], hasWeakMissing:missingWeak.length > 0, hasUnexpectedPresent:unexpectedPresent.length > 0, unexpectedKeys};
-    if (mixed.length) return {label:`${prefix}mixed field`, details:mixed, hasWeakMissing:false, hasUnexpectedPresent:false, unexpectedKeys};
-    if (unexpectedPresent.length) return {label:`${prefix}present`, details:unexpectedPresent, hasWeakMissing:false, hasUnexpectedPresent:true, unexpectedKeys};
-    return {label:`${prefix}weak/missing`, details:missingWeak, hasWeakMissing:true, hasUnexpectedPresent:false, unexpectedKeys};
-  };
+const aboExpectedPatterns = {
+  A:{antiA:{positive:true,min:4,label:"4+"},antiB:{positive:false,label:"0"},a1cell:{positive:false,label:"0"},bcell:{positive:true,min:2,label:"≥2+"}},
+  B:{antiA:{positive:false,label:"0"},antiB:{positive:true,min:4,label:"4+"},a1cell:{positive:true,min:2,label:"≥2+"},bcell:{positive:false,label:"0"}},
+  AB:{antiA:{positive:true,min:4,label:"4+"},antiB:{positive:true,min:4,label:"4+"},a1cell:{positive:false,label:"0"},bcell:{positive:false,label:"0"}},
+  O:{antiA:{positive:false,label:"0"},antiB:{positive:false,label:"0"},a1cell:{positive:true,min:2,label:"≥2+"},bcell:{positive:true,min:2,label:"≥2+"}}
+};
 
-  return {
-    reference:`Rh${reference.rh} ${reference.type}형`,
-    front:classifyGroup("front typing", frontKeys),
-    back:classifyGroup("back typing", backKeys)
+function reactionStrength(value) {
+  return typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
+}
+
+function isMixedReaction(value) {
+  return typeof value === "string" && value.startsWith("mf");
+}
+
+function estimateCandidateABO(r) {
+  const keys = ["antiA","antiB","a1cell","bcell"];
+  const scores = Object.entries(aboExpectedPatterns).map(([type,pattern]) => {
+    let directionErrors = 0, strengthErrors = 0;
+    keys.forEach(key => {
+      const expected = pattern[key];
+      const actualStrength = reactionStrength(r[key]);
+      const actualPositive = actualStrength > 0;
+      if (expected.positive !== actualPositive) directionErrors += 1;
+      else if (expected.positive && (actualStrength < expected.min || isMixedReaction(r[key]))) strengthErrors += 1;
+      else if (!expected.positive && isMixedReaction(r[key])) strengthErrors += 1;
+    });
+    return {type,directionErrors,strengthErrors};
+  }).sort((a,b) => a.directionErrors-b.directionErrors || a.strengthErrors-b.strengthErrors);
+  const best = scores[0];
+  const ties = scores.filter(score => score.directionErrors === best.directionErrors && score.strengthErrors === best.strengthErrors);
+  return {candidateABO:ties.length === 1 ? best.type : "CANDIDATE_AMBIGUOUS", scores, tiedCandidates:ties.map(item => item.type)};
+}
+
+function analyzeRhD(value) {
+  if (value === 4) return {status:"NORMAL",label:"Rh+"};
+  if (value === 0) return {status:"NORMAL",label:"Rh−"};
+  return {status:"ABNORMAL",label:`RhD 약/비정상 반응 ${displayReaction(value)}`};
+}
+
+function normalCandidateResult(analysis, r) {
+  return {type:analysis.candidateABO,rh:analyzeRhD(r.antiD).label};
+}
+
+function classifyISDiscrepancy(r) {
+  const names = {antiA:"Anti-A",antiB:"Anti-B",a1cell:"A₁ cell",bcell:"B cell"};
+  const locations = {antiA:"FRONT",antiB:"FRONT",a1cell:"BACK",bcell:"BACK"};
+  const candidate = estimateCandidateABO(r);
+  const rhD = analyzeRhD(r.antiD);
+  if (candidate.candidateABO === "CANDIDATE_AMBIGUOUS") {
+    return {candidateABO:candidate.candidateABO,tiedCandidates:candidate.tiedCandidates,scores:candidate.scores,classification:"CANDIDATE_AMBIGUOUS",location:null,abnormalities:[],front:null,back:null,expectedPattern:null,rhD};
+  }
+
+  const pattern = aboExpectedPatterns[candidate.candidateABO];
+  const abnormalities = [];
+  ["antiA","antiB","a1cell","bcell"].forEach(key => {
+    const expected = pattern[key];
+    const actual = r[key];
+    const strength = reactionStrength(actual);
+    let type = null;
+    if (!expected.positive && strength > 0) type = "UNEXPECTED_REACTION_PRESENT";
+    else if (isMixedReaction(actual)) type = "MIXED_FIELD";
+    else if (expected.positive && strength === 0) type = "EXPECTED_REACTION_WEAK/MISSING";
+    else if (expected.positive && strength < expected.min) type = "EXPECTED_REACTION_WEAK/MISSING";
+    if (type) abnormalities.push({key,target:names[key],location:locations[key],type,expected:expected.label,actual:displayReaction(actual)});
+  });
+
+  const types = [...new Set(abnormalities.map(item => item.type))];
+  const classification = !abnormalities.length ? "NORMAL" : types.length > 1 ? "MULTIPLE_ABNORMALITIES" : types[0];
+  const makeGroup = location => {
+    const items = abnormalities.filter(item => item.location === location);
+    if (!items.length) return null;
+    const groupTypes = [...new Set(items.map(item => item.type))];
+    const labelType = groupTypes.length > 1 ? "multiple abnormalities" : groupTypes[0] === "EXPECTED_REACTION_WEAK/MISSING" ? "weak/missing" : groupTypes[0] === "UNEXPECTED_REACTION_PRESENT" ? "present" : "mixed field";
+    return {label:`${location.toLowerCase()} typing - ${labelType}`,details:items.map(item => `${item.target}: expected ${item.expected}, actual ${item.actual}`),hasWeakMissing:items.some(item => item.type === "EXPECTED_REACTION_WEAK/MISSING"),hasUnexpectedPresent:items.some(item => item.type === "UNEXPECTED_REACTION_PRESENT"),unexpectedKeys:items.filter(item => item.type === "UNEXPECTED_REACTION_PRESENT").map(item => item.key)};
   };
+  const expectedPattern = {antiA:pattern.antiA.label,antiB:pattern.antiB.label,a1cell:pattern.a1cell.label,bcell:pattern.bcell.label};
+  return {candidateABO:candidate.candidateABO,tiedCandidates:[],scores:candidate.scores,classification,location:[...new Set(abnormalities.map(item => item.location))].join(" + ") || null,abnormalities,front:makeGroup("FRONT"),back:makeGroup("BACK"),expectedPattern,rhD,reference:`${candidate.candidateABO}형`};
 }
 
 document.getElementById("analyzeButton").addEventListener("click", () => showResult(buildAnalysis(readResults())));

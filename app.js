@@ -390,7 +390,7 @@ function renderExpectedActual(result) {
 function renderCandidateSummary(analysis) {
   const candidate = analysis.candidateABO;
   const tied = candidate === "CANDIDATE_AMBIGUOUS" ? `<em>동률: ${analysis.tiedCandidates.join(", ")}</em>` : "";
-  return `<div class="candidate-summary"><small>Candidate ABO</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span></div>${renderRhDGuidance(analysis.rhD)}`;
+  return `<div class="candidate-summary"><small>Candidate ABO · 불일치 분석 기준 phenotype</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span><i>최종 ABO 확정 아님</i></div>${renderRhDGuidance(analysis.rhD)}`;
 }
 
 function showManual15Form() {
@@ -493,7 +493,7 @@ function isMixedReaction(value) {
 function estimateCandidateABO(r) {
   const keys = ["antiA","antiB","a1cell","bcell"];
   const scores = Object.entries(aboExpectedPatterns).map(([type,pattern]) => {
-    let directionErrors = 0, strengthErrors = 0;
+    let directionErrors = 0, strengthErrors = 0, reactionDistance = 0;
     keys.forEach(key => {
       const expected = pattern[key];
       const actualStrength = reactionStrength(r[key]);
@@ -501,11 +501,12 @@ function estimateCandidateABO(r) {
       if (expected.positive !== actualPositive) directionErrors += 1;
       else if (expected.positive && (actualStrength < expected.min || isMixedReaction(r[key]))) strengthErrors += 1;
       else if (!expected.positive && isMixedReaction(r[key])) strengthErrors += 1;
+      reactionDistance += expected.positive ? Math.max(0, expected.min - actualStrength) : actualStrength;
     });
-    return {type,directionErrors,strengthErrors};
-  }).sort((a,b) => a.directionErrors-b.directionErrors || a.strengthErrors-b.strengthErrors);
+    return {type,directionErrors,strengthErrors,reactionDistance};
+  }).sort((a,b) => a.directionErrors-b.directionErrors || a.strengthErrors-b.strengthErrors || a.reactionDistance-b.reactionDistance);
   const best = scores[0];
-  const ties = scores.filter(score => score.directionErrors === best.directionErrors && score.strengthErrors === best.strengthErrors);
+  const ties = scores.filter(score => score.directionErrors === best.directionErrors && score.strengthErrors === best.strengthErrors && score.reactionDistance === best.reactionDistance);
   return {candidateABO:ties.length === 1 ? best.type : "CANDIDATE_AMBIGUOUS", scores, tiedCandidates:ties.map(item => item.type)};
 }
 
@@ -541,8 +542,8 @@ function classifyISDiscrepancy(r) {
     const actual = r[key];
     const strength = reactionStrength(actual);
     let type = null;
-    if (!expected.positive && strength > 0) type = "UNEXPECTED_REACTION_PRESENT";
-    else if (isMixedReaction(actual)) type = "MIXED_FIELD";
+    if (isMixedReaction(actual)) type = "MIXED_FIELD";
+    else if (!expected.positive && strength > 0) type = "UNEXPECTED_REACTION_PRESENT";
     else if (expected.positive && strength === 0) type = "EXPECTED_REACTION_WEAK/MISSING";
     else if (expected.positive && strength < expected.min) type = "EXPECTED_REACTION_WEAK/MISSING";
     if (type) abnormalities.push({key,target:names[key],location:locations[key],type,expected:expected.label,actual:displayReaction(actual)});

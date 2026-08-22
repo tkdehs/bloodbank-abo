@@ -209,12 +209,16 @@ function showWeakDForm(antiDValue) {
 
 function summarizeWeakDResults(includePlateAndDAT) {
   const value = name => document.querySelector(`[name="${name}"]`).value;
+  const methodKeys = includePlateAndDAT ? ["plate","tube","iat"] : ["tube","iat"];
+  const weakDAllNegative = ["ortho","shidia","control"].every(reagent => methodKeys.every(method => value(`weakd-${reagent}-${method}`) === "0"));
   const tableRows = ["ortho","shidia","control"].map(reagent => `${reagent.toUpperCase()}: ${includePlateAndDAT ? `Plate ${value(`weakd-${reagent}-plate`)} / ` : ""}Tube ${value(`weakd-${reagent}-tube`)} / IAT ${value(`weakd-${reagent}-iat`)}`);
   const rhResults = ["Anti-C","Anti-E","Anti-c","Anti-e"].map((name,index) => `${name} ${value(`rh-sub-${index}`)}`);
+  const cOrEPositive = value("rh-sub-0") !== "0" || value("rh-sub-1") !== "0";
+  const needsDelOpinion = weakDAllNegative && cOrEPositive;
   const dat = includePlateAndDAT ? document.querySelector('[name="dat-result"]:checked').value : null;
   const box = document.getElementById("weakDResult");
   box.className = "is-outcome unresolved";
-  box.innerHTML = `<span>WEAK D TEST RECORDED</span><strong>Weak D 관련 검사 결과가 입력되었습니다.</strong><p>${tableRows.join(" · ")}<br>${rhResults.join(" · ")}${dat ? `<br>DAT: ${dat}` : ""}</p><p>결과 해석과 RhD 확정은 시약 제조사 지침 및 기관 SOP에 따라 수행하세요.</p>`;
+  box.innerHTML = `<span>WEAK D TEST RECORDED</span><strong>Weak D 관련 검사 결과가 입력되었습니다.</strong><p>${tableRows.join(" · ")}<br>${rhResults.join(" · ")}${dat ? `<br>DAT: ${dat}` : ""}</p>${needsDelOpinion ? `<div class="del-opinion-alert"><strong>Del형을 배제할 수 없습니다.</strong><p>Weak D 검사 결과가 모두 음성이면서 Rh subtyping의 Anti-C 또는 Anti-E가 양성입니다. Weak D opinion을 입력하세요.</p></div>` : ""}<p>결과 해석과 RhD 확정은 시약 제조사 지침 및 기관 SOP에 따라 수행하세요.</p>`;
 }
 
 function renderManualGroup(prefix, title, subtitle, groupTests, manualGrades) {

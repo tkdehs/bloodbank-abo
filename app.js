@@ -138,7 +138,7 @@ function buildAnalysis(r) {
     reverse: reverseApplicable ? reverse : "판정 제외",
     rh: normalPattern ? `Rh${normalPattern.rh}` : r.antiD === 4 ? "Rh+ 추정" : r.antiD === 0 ? "Rh− 추정" : "RhD 비정상 반응",
     finalType: normalPattern ? `Rh${normalPattern.rh} ${normalPattern.type}형` : null,
-    discrepancy, weakD, antiDReview:r.antiD < 4, causes:[...new Set(causes)], steps
+    discrepancy, weakD, antiDReview:r.antiD < 4, hasPreviousResult:Boolean(previous), causes:[...new Set(causes)], steps
   };
 }
 
@@ -151,13 +151,16 @@ function showResult(a) {
   el.innerHTML = `<span class="status-chip ${a.discrepancy ? "" : "ok"}"><i></i>${a.discrepancy ? "DISCREPANCY" : "CONSISTENT"}</span>
     <h2 class="result-title">${status}</h2><p class="result-subtitle">${subtitle}</p>
     <div class="type-summary"><div class="type-box"><small>${a.finalType ? "최종 패턴" : "정형검사 추정"}</small><strong>${a.finalType || `${a.forward}형 · ${a.rh}`}</strong></div><div class="type-box"><small>역형검사 추정</small><strong>${a.reverse}${a.reverse === "판정 제외" ? "" : "형"}</strong></div></div>
-    ${a.antiDReview ? renderRhDGuidance({needsHistoryReview:true}) : ""}
-    ${a.discrepancy ? `<div class="is-callout"><div><small>NEXT STEP · MANUAL IS</small><strong>수기법 IS로 재검하세요</strong><p>재검 후 관찰한 성상을 다시 입력해 불일치 해소 여부를 확인합니다.</p></div><button type="button" id="startIsButton">IS 재검 입력 <span>→</span></button></div>` : ""}
+    ${a.antiDReview ? renderRhDGuidance({needsHistoryReview:true}, a.hasPreviousResult) : ""}
+    ${a.antiDReview && !a.hasPreviousResult ? `<div class="is-callout weak-d-callout"><div><small>NEXT STEP · WEAK D TEST</small><strong>Weak D 검사를 진행하세요</strong><p>과거 결과가 없어 Weak D 확인검사가 필요합니다.</p></div><button type="button" id="startWeakDButton">Weak D 결과 입력 <span>→</span></button></div>` : ""}
+    ${a.discrepancy && !a.antiDReview ? `<div class="is-callout"><div><small>NEXT STEP · MANUAL IS</small><strong>수기법 IS로 재검하세요</strong><p>재검 후 관찰한 성상을 다시 입력해 불일치 해소 여부를 확인합니다.</p></div><button type="button" id="startIsButton">IS 재검 입력 <span>→</span></button></div>` : ""}
     <div id="isArea"></div>
+    <div id="weakDArea"></div>
     <div class="cause-box"><h3>가능성이 있는 항목</h3><div class="cause-list">${a.causes.map(c => `<span>${c}</span>`).join("")}</div></div>
     <div class="workflow"><h3>권장 확인검사 순서</h3><ol>${a.steps.map((s,i) => `<li data-step="${String(i+1).padStart(2,"0")}">${s}</li>`).join("")}</ol></div>
     <p class="warning">이 결과는 입력값 기반의 규칙형 안내이며 진단이나 최종 혈액형 판정이 아닙니다. 검사법·시약 제조사 지침·기관 SOP가 우선합니다.</p>`;
-  if (a.discrepancy) document.getElementById("startIsButton").addEventListener("click", showISForm);
+  if (a.discrepancy && !a.antiDReview) document.getElementById("startIsButton").addEventListener("click", showISForm);
+  if (a.antiDReview && !a.hasPreviousResult) document.getElementById("startWeakDButton").addEventListener("click", showWeakDForm);
   if (window.innerWidth < 980) document.querySelector(".result-panel").scrollIntoView({behavior:"smooth", block:"start"});
 }
 
@@ -171,6 +174,35 @@ function showISForm() {
   document.getElementById("startIsButton").hidden = true;
   document.getElementById("analyzeIsButton").addEventListener("click", analyzeIS);
   area.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+function weakDGradeSelect(name, label) {
+  return `<label class="weak-d-select"><span>${label}</span><select name="${name}">${grades.map(grade => `<option value="${grade}">${grade}</option>`).join("")}</select></label>`;
+}
+
+function showWeakDForm() {
+  const area = document.getElementById("weakDArea");
+  area.innerHTML = `<div class="is-form weak-d-form"><div class="is-form-head"><span>02</span><div><strong>Weak D 검사 결과</strong><small>과거 결과가 없는 Anti-D 4+ 미만 검체</small></div></div>
+    <div class="weak-d-section"><h3>Testing for Weak D</h3><div class="weak-d-table" role="table" aria-label="Weak D 검사 결과">
+      <div class="weak-d-head">Anti-D Reagents</div><div class="weak-d-head">Tube법</div><div class="weak-d-head">IAT</div>
+      ${["Ortho","SHIDIA","Control"].map(reagent => `<div class="weak-d-reagent">${reagent}</div>${weakDGradeSelect(`weakd-${reagent.toLowerCase()}-tube`, "Tube법")}${weakDGradeSelect(`weakd-${reagent.toLowerCase()}-iat`, "IAT")}`).join("")}
+    </div></div>
+    <div class="weak-d-section"><h3>Rh Subtyping</h3><div class="rh-subtyping-grid">${["Anti-C","Anti-E","Anti-c","Anti-e"].map((reagent, index) => weakDGradeSelect(`rh-sub-${index}`, reagent)).join("")}</div></div>
+    <div class="weak-d-section"><h3>DAT 검사 결과</h3><div class="dat-options">${["Negative","Weak positive","Positive"].map((result, index) => `<input type="radio" id="dat-${index}" name="dat-result" value="${result}" ${index === 0 ? "checked" : ""}><label for="dat-${index}">${result}</label>`).join("")}</div></div>
+    <button type="button" class="is-analyze-button" id="saveWeakDButton">Weak D 검사 결과 확인 <span>→</span></button><div id="weakDResult"></div></div>`;
+  document.getElementById("startWeakDButton").hidden = true;
+  document.getElementById("saveWeakDButton").addEventListener("click", summarizeWeakDResults);
+  area.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+function summarizeWeakDResults() {
+  const value = name => document.querySelector(`[name="${name}"]`).value;
+  const tableRows = ["ortho","shidia","control"].map(reagent => `${reagent.toUpperCase()}: Tube ${value(`weakd-${reagent}-tube`)} / IAT ${value(`weakd-${reagent}-iat`)}`);
+  const rhResults = ["Anti-C","Anti-E","Anti-c","Anti-e"].map((name,index) => `${name} ${value(`rh-sub-${index}`)}`);
+  const dat = document.querySelector('[name="dat-result"]:checked').value;
+  const box = document.getElementById("weakDResult");
+  box.className = "is-outcome unresolved";
+  box.innerHTML = `<span>WEAK D TEST RECORDED</span><strong>Weak D 관련 검사 결과가 입력되었습니다.</strong><p>${tableRows.join(" · ")}<br>${rhResults.join(" · ")}<br>DAT: ${dat}</p><p>결과 해석과 RhD 확정은 시약 제조사 지침 및 기관 SOP에 따라 수행하세요.</p>`;
 }
 
 function renderManualGroup(prefix, title, subtitle, groupTests, manualGrades) {
@@ -421,9 +453,10 @@ function analyzeRhD(value) {
   return {status:"ABNORMAL",label:`RhD 약/비정상 반응 ${displayReaction(value)}`,needsHistoryReview:true};
 }
 
-function renderRhDGuidance(rhD) {
+function renderRhDGuidance(rhD, hasPreviousResult = null) {
   if (!rhD?.needsHistoryReview) return "";
-  return `<div class="rhd-guidance"><small>ANTI-D RESULT REVIEW</small><strong>Anti-D 결과가 4+ 미만입니다.</strong><p>과거 검사 결과와 과거 수혈력을 확인하세요.</p></div>`;
+  const followUp = hasPreviousResult === false ? " 과거 결과가 없으므로 Weak D 검사를 진행하세요." : "";
+  return `<div class="rhd-guidance"><small>ANTI-D RESULT REVIEW</small><strong>Anti-D 결과가 4+ 미만입니다.</strong><p>과거 검사 결과와 과거 수혈력을 확인하세요.${followUp}</p></div>`;
 }
 
 function normalCandidateResult(analysis, r) {

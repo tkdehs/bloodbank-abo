@@ -248,7 +248,7 @@ function summarizeWeakDResults(includePlate) {
     possibleInterpretation = needsDelOpinion ? "Weak D not detected. DEL phenotype은 배제되지 않으며 기관 기준에 따른 추가 확인이 필요할 수 있습니다." : "유효한 Anti-D 검사에서 반응이 검출되지 않았습니다.";
   }
   const nextActions = [];
-  if (!controlValid) nextActions.push("Control 양성 원인과 검사 간섭을 확인하고 유효한 조건에서 재검하세요.");
+  if (!controlValid) nextActions.push("Control 양성 원인과 검사 간섭을 확인하고 기관 SOP에 따라 결과를 처리하세요.");
   if (reagentDiscrepant) nextActions.push("ORTHO와 SHIDIA 불일치 원인을 확인하고 자동 확정하지 마세요.");
   if (antiDAnyPositive) nextActions.push("Tube법으로 15분 방치 후 결과를 확인하세요.");
   if (needsZZAP) nextActions.push("DAT가 양성이므로 ZZAP 처리 후 확인하는 것을 권장합니다.");
@@ -338,7 +338,7 @@ function analyzeWarm25(sourceIS, sourceClassification) {
     ? `<span>RESOLVED</span><strong>37℃ 방치 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${comparison}${rhDGuidance}<p>Cold-reactive antibody 간섭 가능성을 기록하고 기관 SOP에 따라 최종 검증하세요.</p>`
     : weakenedButPresent.length
       ? `<span>COLD ANTIBODY SUSPECTED</span><strong>37℃ 반응 후 응집이 약해졌지만 남아 있습니다.</strong>${comparison}${rhDGuidance}<p>${weakenedButPresent.map(key => tests.find(test => test.id === key)?.name).join(", ")} 반응 감소가 확인되었습니다. Cold antibody screening 검사를 진행하고, 기관 SOP에 따라 항체선별검사·자가대조·DAT를 검토하세요.</p>`
-      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected) : ""}${comparison}${rhDGuidance}<p>새 결과 전체를 다시 분석했습니다. ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 추가검사를 진행하세요.</p>`;
+      : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${reanalysis.frontUnexpected ? renderDecisionSummary(reanalysis.frontUnexpected, false) : ""}${comparison}${rhDGuidance}<p>ABO/RhD형을 확정하지 말고 항체선별검사, 자가대조, DAT 등 원인별 추가검사를 진행하세요.</p>`;
 }
 
 function createUnexpectedRule(analysis, location) {
@@ -373,8 +373,8 @@ function displayReaction(value) {
   return value === 0 ? "0" : `${value}+`;
 }
 
-function renderDecisionSummary(rule) {
-  return `<dl class="decision-summary"><div><dt>Classification</dt><dd>${rule.classification}</dd></div><div><dt>Location</dt><dd>${rule.location}</dd></div><div><dt>Abnormal targets</dt><dd>${rule.abnormalTargets.join(", ")}</dd></div><div><dt>Suspected Cause</dt><dd>${rule.suspectedCause}</dd></div><div><dt>Next Action</dt><dd>${rule.nextAction}</dd></div></dl>`;
+function renderDecisionSummary(rule, showNextAction = true) {
+  return `<dl class="decision-summary"><div><dt>Classification</dt><dd>${rule.classification}</dd></div><div><dt>Location</dt><dd>${rule.location}</dd></div><div><dt>Abnormal targets</dt><dd>${rule.abnormalTargets.join(", ")}</dd></div><div><dt>Suspected Cause</dt><dd>${rule.suspectedCause}</dd></div>${showNextAction ? `<div><dt>Next Action</dt><dd>${rule.nextAction}</dd></div>` : ""}</dl>`;
 }
 
 function renderExpectedActual(result) {

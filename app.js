@@ -15,9 +15,25 @@ const tests = [
 ];
 let initialABOResults = null;
 let aboCaseHistory = {initial:null,manualIS:null,rt15:null};
+const createABOCaseState = () => ({
+  has_initial_forward_weak:false,
+  has_manual_forward_weak:false,
+  has_forward_mf:false,
+  subgroup_suspected:false,
+  subgroup_workup_required:false
+});
+let aboCaseState = createABOCaseState();
 
 function recordABOHistory(stage, results) {
   aboCaseHistory[stage] = results ? {...results} : null;
+  if (!results) return;
+  const forwardValues = [results.antiA,results.antiB];
+  const hasWeak = forwardValues.some(value => isMixedReaction(value) || (reactionStrength(value) > 0 && reactionStrength(value) < 4));
+  const hasMF = forwardValues.some(isMixedReaction);
+  if (stage === "initial") aboCaseState.has_initial_forward_weak ||= hasWeak;
+  if (stage === "manualIS") aboCaseState.has_manual_forward_weak ||= hasWeak;
+  aboCaseState.has_forward_mf ||= hasMF;
+  aboCaseState.subgroup_suspected ||= aboCaseState.has_initial_forward_weak || aboCaseState.has_manual_forward_weak || aboCaseState.has_forward_mf;
 }
 
 const valueOf = grade => ({"0":0,"0.5+":0.5,"1+":1,"2+":2,"3+":3,"4+":4})[grade];
@@ -631,18 +647,29 @@ function assessSubgroupHistory(currentClassification = null) {
   });
   if (meaningfulReference) workupReasons.push(`현재 pattern이 ${meaningfulReference.phenotype} reference와 ${meaningfulReference.similarity}% 유사함`);
 
-  const suspected = evidence.some(item => ["antiA","antiB"].includes(item.key));
-  const workupRequired = suspected && workupReasons.length > 0;
+  if (aboCaseState.has_manual_forward_weak && !workupReasons.length) workupReasons.push("Manual IS에서 forward weak/MF 반응 이력이 확인됨");
+  const suspected = aboCaseState.subgroup_suspected || evidence.some(item => ["antiA","antiB"].includes(item.key));
+  aboCaseState.subgroup_suspected ||= suspected;
+  const currentWorkupRequired = suspected && workupReasons.length > 0;
+  aboCaseState.subgroup_workup_required ||= currentWorkupRequired;
+  const workupRequired = aboCaseState.subgroup_workup_required;
+  const rt15Values = aboCaseHistory.rt15 ? [aboCaseHistory.rt15.antiA,aboCaseHistory.rt15.antiB] : [];
+  const rt15Reproduced = rt15Values.some(value => isMixedReaction(value) || (reactionStrength(value) > 0 && reactionStrength(value) < 4));
+  const unreproducedThroughLatest = Boolean(aboCaseHistory.manualIS) && !aboCaseState.has_manual_forward_weak && (!aboCaseHistory.rt15 || !rt15Reproduced);
+  const activeDiscrepancy = Boolean(currentClassification && currentClassification.classification !== "NORMAL");
+  const initialSignalUnexplained = aboCaseState.has_initial_forward_weak && unreproducedThroughLatest;
+  const optionalWorkupAvailable = suspected && !workupRequired && unreproducedThroughLatest && (activeDiscrepancy || initialSignalUnexplained);
   const historicalSupport = suspected && Number.isFinite(window.aboHistoricalData?.contexts?.SUBGROUP) ? window.aboHistoricalData.contexts.SUBGROUP : null;
   const features = {initialWeakReaction,manualReproduction,incubationChanges,mixedField,discrepancyLocation:currentClassification?.location || null,subgroupSuspicionHistory:evidence.map(item => ({stage:item.stage,target:item.key,type:item.type,detail:item.detail}))};
   const assessment = {
     status:workupRequired ? "SUBGROUP_WORKUP_REQUIRED" : suspected ? "SUBGROUP_SUSPECTED" : null,
-    suspected,workupRequired,targets:targetList,evidence,workupReasons:[...new Set(workupReasons)],meaningfulReference,referenceMatches,historicalSupport,
+    suspected,workupRequired,optionalWorkupAvailable,targets:targetList,evidence,workupReasons:[...new Set(workupReasons)],meaningfulReference,referenceMatches,historicalSupport,
+    caseState:{...aboCaseState},
     features,
     stages:orderedStages.map(stage => ({stage:stageLabels[stage],results:{...aboCaseHistory[stage]}}))
   };
   aboCaseHistory.features = {...features};
-  aboCaseHistory.subgroupSuspicion = {status:assessment.status,targets:[...targetList],workupReasons:[...assessment.workupReasons],history:[...features.subgroupSuspicionHistory]};
+  aboCaseHistory.subgroupSuspicion = {status:assessment.status,optionalWorkupAvailable,caseState:{...aboCaseState},targets:[...targetList],workupReasons:[...assessment.workupReasons],history:[...features.subgroupSuspicionHistory]};
   return assessment;
 }
 
@@ -653,16 +680,17 @@ function renderSubgroupHistory(assessment) {
 
 function renderSubgroupStatus(assessment, scope) {
   if (!assessment?.suspected) return "";
+  const canEnterWorkup = assessment.workupRequired || assessment.optionalWorkupAvailable;
   const initialTargets = [assessment.features.initialWeakReaction.antiA ? "A" : null,assessment.features.initialWeakReaction.antiB ? "B" : null].filter(Boolean);
   const reproduced = Object.values(assessment.features.manualReproduction).some(Boolean);
   const message = initialTargets.length && !reproduced
     ? `초기 장비에서 약한 ${initialTargets.join("/")} 항원 반응이 관찰되었으나 수기검사에서 재현되지 않았습니다. ${initialTargets.join("/")} subgroup 가능성은 완전히 배제하지 않습니다.`
     : "초기 또는 반복검사에서 subgroup 가능성을 시사하는 forward typing abnormality가 확인되었습니다.";
-  return `<div class="subgroup-status ${assessment.workupRequired ? "required" : "suspected"}"><small>${assessment.status}</small><strong>${assessment.workupRequired ? "아형검사 확인 필요" : "아형 가능성 있음"}</strong><p>${message}</p>${renderSubgroupHistory(assessment)}${assessment.workupRequired ? `<div class="subgroup-workup-reasons"><b>Workup trigger</b><ul>${assessment.workupReasons.map(reason => `<li>${reason}</li>`).join("")}</ul></div><button type="button" class="is-analyze-button" id="startSubtypeWorkupButton-${scope}">아형검사 진행 <span>→</span></button><div id="subtypeFormArea-${scope}"></div>` : `<p><b>현재 active discrepancy를 우선 재분류하며, 이 단계에서는 아형검사를 강제하지 않습니다.</b></p>`}</div>`;
+  return `<div class="subgroup-status ${assessment.workupRequired ? "required" : "suspected"}"><small>${assessment.status}</small><strong>${assessment.workupRequired ? "아형검사 확인 필요" : "아형 가능성 있음"}</strong><p>${message}</p>${renderSubgroupHistory(assessment)}${assessment.workupRequired ? `<div class="subgroup-workup-reasons"><b>Workup trigger</b><ul>${assessment.workupReasons.map(reason => `<li>${reason}</li>`).join("")}</ul></div>` : `<p><b>현재 active discrepancy를 우선 재분류하며, 아형검사를 자동으로 강제하지 않습니다. 검사자가 임상적으로 필요하다고 판단하면 선택하여 진행할 수 있습니다.</b></p>`}${canEnterWorkup ? `<button type="button" class="is-analyze-button" id="startSubtypeWorkupButton-${scope}">아형검사 진행 <span>→</span></button><div id="subtypeFormArea-${scope}"></div>` : ""}</div>`;
 }
 
 function bindSubtypeWorkup(assessment, manualResult, scope) {
-  if (!assessment?.workupRequired) return;
+  if (!assessment || (!assessment.workupRequired && !assessment.optionalWorkupAvailable)) return;
   const button = document.getElementById(`startSubtypeWorkupButton-${scope}`);
   if (!button) return;
   button.addEventListener("click", () => {
@@ -877,7 +905,9 @@ function classifyISDiscrepancy(r) {
 
 document.getElementById("analyzeButton").addEventListener("click", () => {
   initialABOResults = readResults();
-  aboCaseHistory = {initial:{...initialABOResults},manualIS:null,rt15:null};
+  aboCaseHistory = {initial:null,manualIS:null,rt15:null};
+  aboCaseState = createABOCaseState();
+  recordABOHistory("initial", initialABOResults);
   showResult(buildAnalysis(initialABOResults));
 });
 document.getElementById("resetButton").addEventListener("click", () => {
@@ -887,6 +917,7 @@ document.getElementById("resetButton").addEventListener("click", () => {
   document.getElementById("previousType").value = "";
   initialABOResults = null;
   aboCaseHistory = {initial:null,manualIS:null,rt15:null};
+  aboCaseState = createABOCaseState();
   document.getElementById("resultState").hidden = true;
   document.getElementById("emptyState").hidden = false;
 });

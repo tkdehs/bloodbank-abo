@@ -9,7 +9,7 @@ const tests = [
   { id: "antiA", name: "Anti-A", desc: "A 항원", group: "forward" },
   { id: "antiB", name: "Anti-B", desc: "B 항원", group: "forward" },
   { id: "antiD", name: "Anti-D", desc: "RhD 항원", group: "forward" },
-  { id: "a1cell", name: "A₁ cell", desc: "Anti-A 확인", group: "reverse" },
+  { id: "a1cell", name: "A cell", desc: "역형검사 시약혈구", group: "reverse" },
   { id: "bcell", name: "B cell", desc: "Anti-B 확인", group: "reverse" }
 ];
 let initialABOResults = null;
@@ -305,7 +305,8 @@ function continueISAnalysis(r) {
     box.dataset.analysis = JSON.stringify(classification);
     box.innerHTML = `<span>FRONT_BACK_CONFLICT</span><strong>정형과 역형이 서로 다른 ABO phenotype을 강하게 지지합니다.</strong>
       ${renderConflictSummary(classification)}
-      <p>이 flag는 cold interference 확정이 아닙니다. 가능성을 우선 확인하기 위해 37℃ 조건 ABO 재검을 권장합니다.</p>
+      ${renderHistoricalEvidence(classification)}
+      <p>이 flag는 cold interference 확정이 아닙니다. 가능성을 우선 확인하기 위해 37℃ 조건 ABO 재검을 권장하며, Ab screening·자가대조 등 unexpected antibody 확인을 함께 검토하세요.</p>
       <div id="warm25Area"></div>`;
     showWarm25Form(r, classification);
     box.scrollIntoView({behavior:"smooth", block:"nearest"});
@@ -319,9 +320,8 @@ function continueISAnalysis(r) {
   } else {
     const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
     const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
-    const fifteenMinuteLocations = get15MinuteLocations(classification);
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
-    const needs15Min = fifteenMinuteLocations.length > 0;
+    const needs15Min = needs15MinuteIncubation(classification);
     box.className = "is-outcome unresolved";
     box.dataset.candidateAbo = classification.candidateABO;
     box.dataset.classification = classification.classification;
@@ -334,11 +334,12 @@ function continueISAnalysis(r) {
       <p>발견된 abnormality마다 독립된 resolution pathway를 병렬로 진행하세요. 모든 이상이 해결된 경우에만 RESOLVED로 재평가합니다.</p>
       ${renderCandidateSummary(classification)}
       ${renderAbnormalityPathways(classification)}
+      ${renderHistoricalEvidence(classification)}
       ${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule) : ""}
       ${needsWarm25 ? `<div id="warm25Area"></div>` : ""}
       ${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
-    if (needs15Min) showManual15Form(r, fifteenMinuteLocations);
+    if (needs15Min) showManual15Form(r);
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
@@ -373,14 +374,13 @@ function analyzeWarm25(sourceIS, sourceClassification) {
       : `<span>UNRESOLVED</span><strong>37℃ 25분 방치 후에도 불일치가 지속됩니다.</strong>${renderCandidateSummary(reanalysis.generic)}${comparison}${remainingPathways}<p>새 37℃ 결과로 Candidate ABO, Expected vs Actual 및 discrepancy classification을 다시 계산했습니다. 남은 abnormality가 있어 전체 상태를 UNRESOLVED로 유지합니다.</p>`;
 }
 
-function get15MinuteLocations(analysis) {
-  const has = (location, allowedTypes) => analysis.abnormalities.some(item => item.location === location && allowedTypes.includes(item.type));
-  // Back typing은 expected reaction의 약화/소실만 15분 방치한다.
-  // 원래 0이어야 하는 cell의 unexpected reaction은 이 경로에 포함하지 않는다.
-  return [
-    has("FRONT", ["EXPECTED_REACTION_WEAK/MISSING", "MIXED_FIELD"]) ? "FRONT" : null,
-    has("BACK", ["EXPECTED_REACTION_WEAK/MISSING"]) ? "BACK" : null
-  ].filter(Boolean);
+function needs15MinuteIncubation(analysis) {
+  // Trigger 위치와 관계없이 시행 시에는 Front/Back 전체 ABO를 재판독한다.
+  // Back unexpected reaction은 trigger가 아니며 기존 전용 pathway로 보낸다.
+  return analysis.abnormalities.some(item =>
+    (item.location === "FRONT" && ["EXPECTED_REACTION_WEAK/MISSING", "MIXED_FIELD"].includes(item.type)) ||
+    (item.location === "BACK" && item.type === "EXPECTED_REACTION_WEAK/MISSING")
+  );
 }
 
 function createUnexpectedRule(analysis, location) {
@@ -450,7 +450,7 @@ function renderExpectedActual(result) {
   if (!result.expectedMap) return "";
   const rows = [
     ["Anti-A",result.expectedMap.antiA,result.actual.antiA], ["Anti-B",result.expectedMap.antiB,result.actual.antiB],
-    ["Anti-D","0 또는 4+",result.actual.antiD], ["A₁ cell",result.expectedMap.a1cell,result.actual.a1cell],
+    ["Anti-D","0 또는 4+",result.actual.antiD], ["A cell",result.expectedMap.a1cell,result.actual.a1cell],
     ["B cell",result.expectedMap.bcell,result.actual.bcell]
   ];
   return `<div class="comparison-box"><div class="comparison-title">Expected vs Actual · ${result.group}형 기준</div>${rows.map(([name,expected,actual]) => `<div><span>${name}</span><b>${expected}</b><em>${displayReaction(actual)}</em></div>`).join("")}</div>`;
@@ -460,6 +460,33 @@ function renderCandidateSummary(analysis) {
   const candidate = analysis.candidateABO;
   const tied = candidate === "CANDIDATE_AMBIGUOUS" ? `<em>동률: ${analysis.tiedCandidates.join(", ")}</em>` : "";
   return `<div class="candidate-summary"><small>Candidate ABO · 불일치 분석 기준 phenotype</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span><i>최종 ABO 확정 아님</i></div>${renderRhDGuidance(analysis.rhD)}`;
+}
+
+function renderHistoricalEvidence(analysis) {
+  const data = window.aboHistoricalData;
+  if (!data) return "";
+  const keys = new Set();
+  if (analysis.frontBackConflict) ["UNEXPECTED_ALLOANTIBODY","AUTOANTIBODY","COLD_REACTIVE","ROULEAUX"].forEach(key => keys.add(key));
+  (analysis.abnormalities || []).forEach(item => {
+    if (item.location === "FRONT" && (item.type === "EXPECTED_REACTION_WEAK/MISSING" || item.type === "MIXED_FIELD")) {
+      keys.add("SUBGROUP");
+      keys.add("BMT/TRANSPLANT");
+    }
+    if (item.location === "BACK" && item.type === "EXPECTED_REACTION_WEAK/MISSING") keys.add("WEAK_REVERSE");
+    if (item.type === "UNEXPECTED_REACTION_PRESENT") {
+      keys.add("UNEXPECTED_ALLOANTIBODY");
+      keys.add("AUTOANTIBODY");
+      keys.add("COLD_REACTIVE");
+      if (item.location === "BACK") keys.add("ROULEAUX");
+    }
+  });
+  const labels = {
+    SUBGROUP:"ABO subgroup/항원 약화",UNEXPECTED_ALLOANTIBODY:"Unexpected alloantibody",AUTOANTIBODY:"Autoantibody",
+    WEAK_REVERSE:"Weak reverse reaction","BMT/TRANSPLANT":"BMT/이식 관련",COLD_REACTIVE:"Cold-reactive",ROULEAUX:"Rouleaux"
+  };
+  const items = [...keys].map(key => ({key,label:labels[key],count:data.contexts[key]})).filter(item => Number.isFinite(item.count));
+  if (!items.length) return "";
+  return `<div class="historical-evidence"><small>DE-IDENTIFIED HISTORICAL CONTEXT · 2021–2026</small><strong>현재 pattern과 함께 검토할 과거 자료 범주</strong><div>${items.map(item => `<span>${item.label}<b>${item.count} rows</b></span>`).join("")}</div><p>총 ${data.totalRows}건의 비식별 자료에서 관찰된 중복 가능 범주입니다. 빈도는 진단확률이나 원인 확정값이 아니며 Candidate ABO·discrepancy classification 계산에는 사용하지 않습니다.</p></div>`;
 }
 
 function renderConflictSummary(analysis) {
@@ -472,11 +499,11 @@ function renderConflictSummary(analysis) {
   </dl></div>`;
 }
 
-function showManual15Form(sourceResults, locations) {
+function showManual15Form(sourceResults) {
   const area = document.getElementById("manual15Area");
   area.innerHTML = `<div class="manual15-form"><div class="is-form-head"><span>03</span><div><strong>Manual 15분 방치 후 결과</strong><small>15분 후 응집 성상 재판정</small></div></div>
-    ${locations.includes("FRONT") ? renderManualGroup("m15", "Front Typing", "정형검사", tests.filter(test => test.group === "forward"), manualFrontGrades) : ""}
-    ${locations.includes("BACK") ? renderManualGroup("m15", "Back Typing", "역형검사", tests.filter(test => test.group === "reverse"), manualBackGrades) : ""}
+    ${renderManualGroup("m15", "Front Typing", "정형검사 · 전체 재판독", tests.filter(test => test.group === "forward"), manualFrontGrades)}
+    ${renderManualGroup("m15", "Back Typing", "역형검사 · 전체 재판독", tests.filter(test => test.group === "reverse"), manualBackGrades)}
     <button type="button" class="is-analyze-button" id="analyze15MinButton">15분 결과 재판정 <span>→</span></button><div id="manual15Result"></div></div>`;
   document.getElementById("analyze15MinButton").addEventListener("click", () => analyzeManual15(sourceResults));
 }
@@ -492,11 +519,12 @@ function analyzeManual15(sourceResults) {
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const frontUnexpectedRule = match ? null : createUnexpectedRule(classification, "FRONT");
   const subtypeTargets = match ? [] : detectSubtypeTargets(classification);
+  const reactionChanges = render15MinuteComparison(sourceResults, r);
   const box = document.getElementById("manual15Result");
   box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
   box.innerHTML = match
-    ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
-    : `<span>REANALYZED</span><strong>15분 후 결과를 Candidate ABO부터 다시 분석했습니다.</strong>${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${renderAbnormalityPathways(classification, "15MIN")}<p>한쪽 pathway가 해결되어도 남은 abnormality가 있어 전체 상태를 UNRESOLVED로 유지합니다.</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
+    ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
+    : `<span>REANALYZED</span><strong>15분 후 ABO 전체 결과를 Candidate ABO부터 다시 분석했습니다.</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${renderAbnormalityPathways(classification, "15MIN")}<p>한쪽 pathway가 해결되어도 남은 abnormality가 있어 전체 상태를 UNRESOLVED로 유지합니다.</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
   if (frontUnexpectedRule) showWarm25Form(r, {...classification,front:{...classification.front,unexpectedKeys:frontUnexpectedRule.abnormalKeys}});
   if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r);
 }
@@ -592,12 +620,38 @@ function estimateCandidateABO(r) {
   return {candidateABO:ties.length === 1 ? best.type : "CANDIDATE_AMBIGUOUS", scores, tiedCandidates:ties.map(item => item.type)};
 }
 
+function classifyReactionChange(before, after) {
+  const beforeMF = isMixedReaction(before), afterMF = isMixedReaction(after);
+  const beforeStrength = reactionStrength(before), afterStrength = reactionStrength(after);
+  if (beforeMF && afterMF) return beforeStrength === afterStrength ? "Mixed Field 지속" : `Mixed Field 변화 (${beforeStrength}+→${afterStrength}+)`;
+  if (beforeMF !== afterMF) {
+    if (afterStrength === 0) return "반응 소실 (MF 소실)";
+    return beforeMF ? "Mixed Field 변화 (MF→균일 반응)" : "Mixed Field 변화 (균일 반응→MF)";
+  }
+  if (beforeStrength === afterStrength) return "변화 없음";
+  if (beforeStrength === 0 && afterStrength > 0) return "새로운 반응 발생";
+  if (beforeStrength > 0 && afterStrength === 0) return "반응 소실";
+  return afterStrength > beforeStrength ? "반응 강도 증가" : "반응 강도 감소";
+}
+
+function render15MinuteComparison(before, after) {
+  const names = {antiA:"Anti-A",antiB:"Anti-B",antiD:"Anti-D",a1cell:"A cell",bcell:"B cell"};
+  const rows = ["antiA","antiB","antiD","a1cell","bcell"].map(key => ({
+    name:names[key],before:displayReaction(before[key]),after:displayReaction(after[key]),change:classifyReactionChange(before[key],after[key])
+  }));
+  return `<div class="reaction-change-table"><div class="reaction-change-title">IS vs 15분 · ABO 전체 반응 변화</div><div class="reaction-change-row head"><span>항목</span><b>IS</b><b>15분</b><em>변화</em></div>${rows.map(row => `<div class="reaction-change-row"><span>${row.name}</span><b>${row.before}</b><b>${row.after}</b><em>${row.change}</em></div>`).join("")}</div>`;
+}
+
 // Front와 Back이 각각 정상 판정 강도를 충족하면서 서로 다른 phenotype을
 // 지지할 때만 conflict로 본다. 약한 반응이나 MF는 기존 discrepancy 로직으로 보낸다.
 function detectFrontBackConflict(r) {
   const frontClear = [r.antiA,r.antiB].every(value => !isMixedReaction(value) && (reactionStrength(value) === 0 || reactionStrength(value) === 4));
   const backClear = [r.a1cell,r.bcell].every(value => !isMixedReaction(value) && (reactionStrength(value) === 0 || reactionStrength(value) >= 2));
-  if (!frontClear || !backClear) return null;
+  const frontHasPositiveEvidence = reactionStrength(r.antiA) > 0 || reactionStrength(r.antiB) > 0;
+  const backHasPositiveEvidence = reactionStrength(r.a1cell) > 0 || reactionStrength(r.bcell) > 0;
+  // 양쪽 모두 실제 양성 반응 증거가 있어야 강한 phenotype conflict로 본다.
+  // 한쪽이 모두 0인 경우는 해당 반응의 weak/missing 경로로 평가한다.
+  if (!frontClear || !backClear || !frontHasPositiveEvidence || !backHasPositiveEvidence) return null;
   const frontPhenotype = expectedGroup(reactionStrength(r.antiA) > 0, reactionStrength(r.antiB) > 0);
   const backPhenotype = reverseGroup(reactionStrength(r.a1cell) > 0, reactionStrength(r.bcell) > 0);
   return frontPhenotype === backPhenotype ? null : {frontPhenotype,backPhenotype};
@@ -636,7 +690,7 @@ function normalCandidateResult(analysis, r) {
 }
 
 function classifyISDiscrepancy(r) {
-  const names = {antiA:"Anti-A",antiB:"Anti-B",a1cell:"A₁ cell",bcell:"B cell"};
+  const names = {antiA:"Anti-A",antiB:"Anti-B",a1cell:"A cell",bcell:"B cell"};
   const locations = {antiA:"FRONT",antiB:"FRONT",a1cell:"BACK",bcell:"BACK"};
   const candidate = estimateCandidateABO(r);
   const rhD = analyzeRhD(r.antiD);

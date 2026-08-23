@@ -1,0 +1,6 @@
+# Local source records may contain personal or clinical identifiers.
+abo-data/
+
+# De-identification intermediates and locally generated analysis artifacts.
+tmp/
+outputs/

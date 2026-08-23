@@ -572,38 +572,45 @@ function analyzeSubtype(targets, r) {
   const antiABResult = readSubtype("antiAB");
   const a1Reagent = targets.includes("A") ? readSubtype("a1Reagent") : null;
   const a2Reagent = targets.includes("A") ? readSubtype("a2Reagent") : null;
-  const results = [];
   const numericStrength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
   const antiA = numericStrength(r.antiA), antiB = numericStrength(r.antiB);
   const antiAB = numericStrength(antiABResult);
-  const aMF = typeof r.antiA === "string" && r.antiA.startsWith("mf");
-  const bMF = typeof r.antiB === "string" && r.antiB.startsWith("mf");
-  const antiABMF = typeof antiABResult === "string" && antiABResult.startsWith("mf");
   let reverseSubtypeNote = "";
-
-  if (targets.includes("A")) {
-    let suspected;
-    if (antiA1 > 0) suspected = "A₁/A₁B-like 또는 variant/acquired pattern — 자동 확정 불가";
-    else if (antiH >= 2 && antiH <= 3 && antiA >= 3 && antiAB >= 3 && !aMF && !antiABMF) suspected = "A₂ 또는 A₂B chart-compatible pattern";
-    else if (antiH >= 3 && (aMF || antiABMF || antiA === 2)) suspected = "A₃ 계열 chart-compatible pattern";
-    else if (antiH >= 3 && antiA <= 1 && antiAB > antiA) suspected = "Aₓ 계열 chart-compatible pattern";
-    else if (antiH >= 3 && antiA === 0 && antiAB === 0) suspected = "Ael 등 매우 약한 A pattern — adsorption/elution 필요";
-    else suspected = "A 아형 가능 — 혈청학적 패턴만으로 세부형 미확정";
-    results.push({group:"A", suspected});
-    if (numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) === 0) reverseSubtypeNote = "A₁ cell 선택 반응으로 anti-A₁ 가능성을 확인하세요.";
-    else if (numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) > 0) reverseSubtypeNote = "A₁/A₂ cell 모두 반응하여 anti-A₁ 특이성만으로 설명되지 않습니다. Unexpected antibody를 확인하세요.";
-  }
-  if (targets.includes("B")) {
-    let suspected;
-    if (bMF || antiABMF || antiB === 2) suspected = "B₃ 계열 chart-compatible pattern";
-    else if (antiB <= 1 && antiAB > antiB) suspected = "Bₓ 계열 chart-compatible pattern";
-    else if (antiB === 0 && antiAB === 0) suspected = "Bel 등 매우 약한 B pattern — adsorption/elution 필요";
-    else suspected = "B 아형 가능 — 추가 확인 필요";
-    results.push({group:"B", suspected});
-  }
+  const observations = {antiA:r.antiA,antiB:r.antiB,antiAB:antiABResult,antiA1,antiH,a1Cell:a1Reagent,a2Cell:a2Reagent,bCell:r.bcell};
+  const referenceGroups = antiA > 0 && antiB > 0 ? ["AB"] : targets;
+  const matches = findSubgroupReferenceMatches(referenceGroups, observations);
+  if (targets.includes("A") && numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) === 0) reverseSubtypeNote = "A₁ cell 선택 반응으로 anti-A₁ 가능성을 확인하세요.";
+  else if (targets.includes("A") && numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) > 0) reverseSubtypeNote = "A₁/A₂ cell 모두 반응하여 anti-A₁ 특이성만으로 설명되지 않습니다. Unexpected antibody를 확인하세요.";
   const box = document.getElementById("subtypeResult");
   box.className = "subtype-outcome";
-  box.innerHTML = `<span>SUSPECTED SUBGROUP · REFERENCE PATTERN</span>${results.map(item => `<strong>${item.suspected}</strong>`).join("")}<div class="subtype-evidence"><b>Anti-A,B ${displayReaction(antiABResult)}</b><b>Anti-H ${displayReaction(antiH)}</b>${targets.includes("A") ? `<b>Anti-A₁ ${displayReaction(antiA1)}</b><b>A₁ cell ${displayReaction(a1Reagent)}</b><b>A₂ cell ${displayReaction(a2Reagent)}</b>` : ""}</div>${reverseSubtypeNote ? `<p>${reverseSubtypeNote}</p>` : ""}<p>사진의 identification chart는 참고 패턴이며 확정 알고리즘이 아닙니다. MF는 수혈/이식 이력과 함께 평가하고, 매우 약한 아형은 adsorption–elution·타액검사·ABO genotyping 등 기관 SOP의 확정검사가 필요합니다.</p>`;
+  box.innerHTML = `<span>SUSPECTED SUBGROUP · REFERENCE SIMILARITY</span><strong>${matches.length ? "입력값과 유사한 subgroup reference 후보" : "비교 가능한 subgroup reference 후보 없음"}</strong>${matches.length ? `<div class="subgroup-match-list">${matches.map((match,index) => `<article><small>REFERENCE ${index+1} · ${match.group}</small><b>${match.phenotype}</b><em>Similarity ${match.similarity}%</em><p>${match.remarks.join(" · ")}</p></article>`).join("")}</div>` : ""}<div class="subtype-evidence"><b>Anti-A,B ${displayReaction(antiABResult)}</b><b>Anti-H ${displayReaction(antiH)}</b>${targets.includes("A") ? `<b>Anti-A₁ ${displayReaction(antiA1)}</b><b>A₁ cell ${displayReaction(a1Reagent)}</b><b>A₂ cell ${displayReaction(a2Reagent)}</b>` : ""}</div>${reverseSubtypeNote ? `<p>${reverseSubtypeNote}</p>` : ""}<p>이 reference는 subgroup 관련 행만 사용한 유사도 참고 지식이며 확정 진단 규칙이 아닙니다. 실제 검사 순서와 최종 판정은 검사실 SOP와 검증된 case data를 우선하고, 필요 시 adsorption–elution·타액검사·ABO genotyping을 시행하세요.</p>`;
+}
+
+function parseReferenceReaction(expected) {
+  if (expected == null) return null;
+  const mf = expected.includes("(MF)");
+  const numbers = expected.match(/[0-4](?:\.5)?/g).map(Number);
+  return {min:numbers[0],max:numbers[1] ?? numbers[0],mf};
+}
+
+function findSubgroupReferenceMatches(groups, observations) {
+  const reference = window.aboSubgroupReference;
+  if (!reference) return [];
+  return reference.phenotypes.filter(item => groups.includes(item.group)).map(item => {
+    let penalty = 0, compared = 0;
+    reference.fields.forEach(field => {
+      const expected = parseReferenceReaction(item.expected[field]);
+      const actual = observations[field];
+      if (!expected || actual == null) return;
+      const strength = reactionStrength(actual);
+      const actualMF = isMixedReaction(actual);
+      penalty += strength < expected.min ? expected.min - strength : strength > expected.max ? strength - expected.max : 0;
+      if (expected.mf !== actualMF) penalty += expected.mf ? 1 : 0.5;
+      compared++;
+    });
+    const similarity = compared ? Math.max(0,Math.round(100-(penalty/(compared*4))*100)) : 0;
+    return {...item,similarity,compared};
+  }).filter(item => item.compared >= 4).sort((a,b) => b.similarity-a.similarity || a.phenotype.localeCompare(b.phenotype)).slice(0,3);
 }
 
 const aboExpectedPatterns = {

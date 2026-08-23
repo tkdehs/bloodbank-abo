@@ -13,6 +13,11 @@ const tests = [
   { id: "bcell", name: "B cell", desc: "Anti-B 확인", group: "reverse" }
 ];
 let initialABOResults = null;
+let aboCaseHistory = {initial:null,manualIS:null,rt15:null};
+
+function recordABOHistory(stage, results) {
+  aboCaseHistory[stage] = results ? {...results} : null;
+}
 
 const valueOf = grade => ({"0":0,"0.5+":0.5,"1+":1,"2+":2,"3+":3,"4+":4})[grade];
 
@@ -281,6 +286,7 @@ function readManualResults(prefix) {
 
 function analyzeIS() {
   const r = readManualResults("is");
+  recordABOHistory("manualIS", r);
   const consistency = checkResultConsistency(initialABOResults, r);
   if (consistency.flag) {
     const box = document.getElementById("isResult");
@@ -298,6 +304,7 @@ function analyzeIS() {
 
 function continueISAnalysis(r) {
   const classification = classifyISDiscrepancy(r);
+  const subtypeAssessment = assessSubgroupHistory(classification);
   if (classification.frontBackConflict) {
     const box = document.getElementById("isResult");
     box.className = "is-outcome unresolved";
@@ -307,20 +314,25 @@ function continueISAnalysis(r) {
       ${renderConflictSummary(classification)}
       ${renderHistoricalEvidence(classification)}
       <p>이 flag는 cold interference 확정이 아닙니다. 가능성을 우선 확인하기 위해 37℃ 조건 ABO 재검을 권장하며, Ab screening·자가대조 등 unexpected antibody 확인을 함께 검토하세요.</p>
-      <div id="warm25Area"></div>`;
+      <div id="warm25Area"></div>${subtypeAssessment.targets.length ? `<div id="subtypeArea"></div>` : ""}`;
     showWarm25Form(r, classification);
+    if (subtypeAssessment.targets.length) showSubtypeForm(subtypeAssessment.targets, r, subtypeAssessment);
     box.scrollIntoView({behavior:"smooth", block:"nearest"});
     return;
   }
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const box = document.getElementById("isResult");
-  if (match) {
+  if (match && !subtypeAssessment.targets.length) {
     box.className = "is-outcome resolved";
     box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}<p>초기 ABO 불일치가 수기법 IS 재검에서 해소되었습니다. RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
+  } else if (match) {
+    box.className = "is-outcome unresolved";
+    box.innerHTML = `<span>SUBGROUP HISTORY RETAINED</span><strong>IS 결과가 정상 패턴이어도 이전 forward abnormality는 해결 처리하지 않습니다.</strong>${renderCandidateSummary(classification)}<p>Initial(VISION)부터 현재 단계까지의 약한 반응·Mixed Field·반응 소실 이력을 근거로 ABO subgroup 가능성을 별도로 평가하세요.</p><div id="subtypeArea"></div>`;
+    showSubtypeForm(subtypeAssessment.targets, r, subtypeAssessment);
   } else {
     const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
     const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
-    const subtypeTargets = detectSubtypeTargets(classification);
+    const subtypeTargets = subtypeAssessment.targets;
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
     const needs15Min = needs15MinuteIncubation(classification);
     box.className = "is-outcome unresolved";
@@ -342,7 +354,7 @@ function continueISAnalysis(r) {
       ${subtypeTargets.length && !needs15Min ? `<div id="subtypeArea"></div>` : ""}`;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
     if (needs15Min) showManual15Form(r);
-    if (subtypeTargets.length && !needs15Min) showSubtypeForm(subtypeTargets, r);
+    if (subtypeTargets.length && !needs15Min) showSubtypeForm(subtypeTargets, r, subtypeAssessment);
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
@@ -517,34 +529,88 @@ function analyzeManual15(sourceResults) {
     if (!selected) return [test.id,sourceResults[test.id]];
     return [test.id,selected.value.startsWith("mf") ? selected.value : valueOf(selected.value)];
   }));
+  recordABOHistory("rt15", r);
   const reanalysis = analyzeExpectedVsActual(r);
   const classification = reanalysis.generic;
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
+  const subtypeAssessment = assessSubgroupHistory(classification);
   const frontUnexpectedRule = match ? null : createUnexpectedRule(classification, "FRONT");
-  const subtypeTargets = match ? [] : detectSubtypeTargets(classification);
+  const subtypeTargets = subtypeAssessment.targets;
   const reactionChanges = render15MinuteComparison(sourceResults, r);
   const box = document.getElementById("manual15Result");
-  box.className = `is-outcome ${match ? "resolved" : "unresolved"}`;
-  box.innerHTML = match
+  const subgroupHistoryPersists = subtypeTargets.length > 0;
+  box.className = `is-outcome ${match && !subgroupHistoryPersists ? "resolved" : "unresolved"}`;
+  box.innerHTML = match && !subgroupHistoryPersists
     ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
-    : `<span>REANALYZED</span><strong>15분 후 ABO 전체 결과를 Candidate ABO부터 다시 분석했습니다.</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${renderAbnormalityPathways(classification, "15MIN")}<p>한쪽 pathway가 해결되어도 남은 abnormality가 있어 전체 상태를 UNRESOLVED로 유지합니다.</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
+    : `<span>${match ? "SUBGROUP HISTORY RETAINED" : "REANALYZED"}</span><strong>${match ? "15분 후 반응이 정상화되어도 이전 forward abnormality는 해결 처리하지 않습니다." : "15분 후 ABO 전체 결과를 Candidate ABO부터 다시 분석했습니다."}</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${match ? "" : renderAbnormalityPathways(classification, "15MIN")}<p>${match ? "Initial(VISION) → Manual IS → RT 15분 전체 이력을 근거로 subgroup 가능성을 계속 평가합니다." : "한쪽 pathway가 해결되어도 남은 abnormality 또는 이전 단계의 subgroup 관련 이력이 있어 전체 상태를 UNRESOLVED로 유지합니다."}</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
   if (frontUnexpectedRule) showWarm25Form(r, {...classification,front:{...classification.front,unexpectedKeys:frontUnexpectedRule.abnormalKeys}});
-  if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r);
+  if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r, subtypeAssessment);
 }
 
-function detectSubtypeTargets(classification) {
-  if (classification.candidateABO === "CANDIDATE_AMBIGUOUS") return [];
-  const subgroupAbnormalities = classification.abnormalities.filter(item =>
-    item.location === "FRONT" && (item.type === "EXPECTED_REACTION_WEAK/MISSING" || item.type === "MIXED_FIELD")
-  );
-  const candidate = classification.candidateABO;
-  const aCellUnexpected = classification.abnormalities.some(item => item.location === "BACK" && item.key === "a1cell" && item.type === "UNEXPECTED_REACTION_PRESENT");
-  const aSuspected = (candidate === "A" || candidate === "AB") && (subgroupAbnormalities.some(item => item.key === "antiA") || aCellUnexpected);
-  const bSuspected = (candidate === "B" || candidate === "AB") && subgroupAbnormalities.some(item => item.key === "antiB");
-  return [aSuspected ? "A" : null, bSuspected ? "B" : null].filter(Boolean);
+function assessSubgroupHistory(currentClassification = null) {
+  const stageLabels = {initial:"Initial VISION",manualIS:"Manual IS",rt15:"RT 15분"};
+  const orderedStages = ["initial","manualIS","rt15"].filter(stage => aboCaseHistory[stage]);
+  const targets = new Set();
+  const evidence = [];
+  const addEvidence = (stage, key, type, detail) => {
+    const target = key === "antiA" ? "A" : key === "antiB" ? "B" : null;
+    if (target) targets.add(target);
+    const id = `${stage}|${key}|${type}|${detail}`;
+    if (!evidence.some(item => item.id === id)) evidence.push({id,stage:stageLabels[stage] || stage,key,type,detail,target});
+  };
+
+  orderedStages.forEach(stage => {
+    const result = aboCaseHistory[stage];
+    ["antiA","antiB"].forEach(key => {
+      const strength = reactionStrength(result[key]);
+      if (isMixedReaction(result[key])) addEvidence(stage,key,"MIXED_FIELD",`${displayReaction(result[key])} 관찰`);
+      else if (strength > 0 && strength < 4) addEvidence(stage,key,"WEAK_FORWARD_REACTION",`${displayReaction(result[key])} 관찰`);
+    });
+    const stageClassification = stage === "rt15" && currentClassification ? currentClassification : classifyISDiscrepancy(result);
+    (stageClassification.abnormalities || []).filter(item => item.location === "FRONT").forEach(item => {
+      if (["EXPECTED_REACTION_WEAK/MISSING","MIXED_FIELD","UNEXPECTED_REACTION_PRESENT"].includes(item.type)) {
+        addEvidence(stage,item.key,item.type,`expected ${item.expected}, actual ${item.actual}`);
+      }
+    });
+  });
+
+  for (let index = 1; index < orderedStages.length; index++) {
+    const beforeStage = orderedStages[index - 1], afterStage = orderedStages[index];
+    const before = aboCaseHistory[beforeStage], after = aboCaseHistory[afterStage];
+    ["antiA","antiB"].forEach(key => {
+      const beforeStrength = reactionStrength(before[key]), afterStrength = reactionStrength(after[key]);
+      if (beforeStrength > 0 && afterStrength === 0) addEvidence(afterStage,key,"REACTION_LOST",`${stageLabels[beforeStage]} ${displayReaction(before[key])} → ${stageLabels[afterStage]} 0`);
+    });
+  }
+
+  const initial = aboCaseHistory.initial, manualIS = aboCaseHistory.manualIS;
+  if (initial && manualIS) {
+    const initialFront = expectedGroup(reactionStrength(initial.antiA) > 0,reactionStrength(initial.antiB) > 0);
+    const manualFront = expectedGroup(reactionStrength(manualIS.antiA) > 0,reactionStrength(manualIS.antiB) > 0);
+    if (initialFront !== manualFront) {
+      ["antiA","antiB"].filter(key => reactionStrength(initial[key]) !== reactionStrength(manualIS[key])).forEach(key =>
+        addEvidence("manualIS",key,"VISION_IS_MISMATCH",`${initialFront}-like → ${manualFront}-like`)
+      );
+    }
+  }
+
+  if (aboCaseHistory.rt15 && currentClassification?.classification !== "NORMAL") {
+    const inferred = currentClassification.candidateABO;
+    if (!targets.size && ["A","AB"].includes(inferred)) targets.add("A");
+    if (!targets.size && ["B","AB"].includes(inferred)) targets.add("B");
+    evidence.push({id:"rt15|overall|UNEXPLAINED",stage:stageLabels.rt15,key:"ABO 전체",type:"UNEXPLAINED_15MIN_PATTERN",detail:"하나의 정상 ABO pattern으로 명확히 설명되지 않음",target:null});
+  }
+
+  const historicalSupport = targets.size > 0 && Number.isFinite(window.aboHistoricalData?.contexts?.SUBGROUP) ? window.aboHistoricalData.contexts.SUBGROUP : null;
+  return {targets:[...targets],evidence,historicalSupport,stages:orderedStages.map(stage => ({stage:stageLabels[stage],results:aboCaseHistory[stage]}))};
 }
 
-function showSubtypeForm(targets, manualResult) {
+function renderSubgroupHistory(assessment) {
+  if (!assessment?.evidence.length) return "";
+  return `<div class="subgroup-history"><small>CASE HISTORY · INITIAL → IS → RT 15분</small><strong>이전 단계의 forward abnormality 유지</strong>${assessment.evidence.map(item => `<div><b>${item.stage}</b><span>${item.key === "antiA" ? "Anti-A" : item.key === "antiB" ? "Anti-B" : item.key}</span><em>${item.type}</em><p>${item.detail}</p></div>`).join("")}${assessment.historicalSupport ? `<p>검증된 비식별 case data의 subgroup/항원 약화 범주 ${assessment.historicalSupport}건은 보조적 맥락으로만 사용합니다.</p>` : ""}</div>`;
+}
+
+function showSubtypeForm(targets, manualResult, assessment = null) {
   const area = document.getElementById("subtypeArea");
   const subtypeGrades = grades.map(grade => ({label:grade, value:grade}));
   const testRows = [
@@ -553,6 +619,7 @@ function showSubtypeForm(targets, manualResult) {
   ];
   area.innerHTML = `<div class="subtype-form"><div class="is-form-head"><span>04</span><div><strong>${targets.join("/")}형 아형검사</strong><small>검사실 SOP 선택 추가검사</small></div></div>
     <div class="subtype-note">Reference table과 검사 workflow를 분리합니다. 현재 아형검사 입력은 Anti-A₁과 Anti-H만 시행하며, reference의 나머지 항목을 자동 요구하지 않습니다.</div>
+    ${renderSubgroupHistory(assessment)}
     <div class="is-test-list">${testRows.map(test => `<div class="is-test-row"><span>${test.name}<small>${test.desc}</small></span><div class="is-grade-options">${test.grades.map((grade,i) => `<input type="radio" id="sub-${test.id}-${i}" name="sub-${test.id}" value="${grade.value}" ${i===0?"checked":""}><label for="sub-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div>
     <button type="button" class="is-analyze-button" id="analyzeSubtypeButton">아형 의심 결과 확인 <span>→</span></button><div id="subtypeResult"></div></div>`;
   document.getElementById("analyzeSubtypeButton").addEventListener("click", () => analyzeSubtype(targets, manualResult));
@@ -750,6 +817,7 @@ function classifyISDiscrepancy(r) {
 
 document.getElementById("analyzeButton").addEventListener("click", () => {
   initialABOResults = readResults();
+  aboCaseHistory = {initial:{...initialABOResults},manualIS:null,rt15:null};
   showResult(buildAnalysis(initialABOResults));
 });
 document.getElementById("resetButton").addEventListener("click", () => {
@@ -758,6 +826,7 @@ document.getElementById("resetButton").addEventListener("click", () => {
   document.getElementById("patientType").value = "adult";
   document.getElementById("previousType").value = "";
   initialABOResults = null;
+  aboCaseHistory = {initial:null,manualIS:null,rt15:null};
   document.getElementById("resultState").hidden = true;
   document.getElementById("emptyState").hidden = false;
 });

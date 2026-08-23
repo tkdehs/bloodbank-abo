@@ -547,43 +547,28 @@ function detectSubtypeTargets(classification) {
 function showSubtypeForm(targets, manualResult) {
   const area = document.getElementById("subtypeArea");
   const subtypeGrades = grades.map(grade => ({label:grade, value:grade}));
-  const testRows = [{id:"antiAB", name:"Anti-A,B", desc:"A/B 항원 확인", grades:manualFrontGrades}];
-  if (targets.includes("A")) testRows.push(
+  const testRows = [
     {id:"antiA1", name:"Anti-A₁", desc:"A₁ lectin", grades:subtypeGrades},
-    {id:"antiH", name:"Anti-H", desc:"H lectin", grades:subtypeGrades},
-    {id:"a1Reagent", name:"A₁ cell", desc:"아형검사 시약혈구", grades:subtypeGrades},
-    {id:"a2Reagent", name:"A₂ cell", desc:"아형검사 시약혈구", grades:subtypeGrades}
-  );
-  else testRows.push({id:"antiH", name:"Anti-H", desc:"H lectin", grades:subtypeGrades});
-  area.innerHTML = `<div class="subtype-form"><div class="is-form-head"><span>04</span><div><strong>${targets.join("/")}형 아형검사</strong><small>DiaMed ABO identification chart 기반 참고 입력</small></div></div>
-    <div class="subtype-note">일반 ABO 검사가 아닌 아형 확인 영역입니다. Anti-A,B·lectin${targets.includes("A") ? "·A₁/A₂ reagent cell" : ""} 결과를 함께 비교하세요.</div>
+    {id:"antiH", name:"Anti-H", desc:"H lectin", grades:subtypeGrades}
+  ];
+  area.innerHTML = `<div class="subtype-form"><div class="is-form-head"><span>04</span><div><strong>${targets.join("/")}형 아형검사</strong><small>검사실 SOP 선택 추가검사</small></div></div>
+    <div class="subtype-note">Reference table과 검사 workflow를 분리합니다. 현재 아형검사 입력은 Anti-A₁과 Anti-H만 시행하며, reference의 나머지 항목을 자동 요구하지 않습니다.</div>
     <div class="is-test-list">${testRows.map(test => `<div class="is-test-row"><span>${test.name}<small>${test.desc}</small></span><div class="is-grade-options">${test.grades.map((grade,i) => `<input type="radio" id="sub-${test.id}-${i}" name="sub-${test.id}" value="${grade.value}" ${i===0?"checked":""}><label for="sub-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div>
     <button type="button" class="is-analyze-button" id="analyzeSubtypeButton">아형 의심 결과 확인 <span>→</span></button><div id="subtypeResult"></div></div>`;
   document.getElementById("analyzeSubtypeButton").addEventListener("click", () => analyzeSubtype(targets, manualResult));
 }
 
 function analyzeSubtype(targets, r) {
-  const readSubtype = name => {
-    const raw = document.querySelector(`input[name="sub-${name}"]:checked`).value;
-    return raw.startsWith("mf") ? raw : valueOf(raw);
-  };
   const antiH = valueOf(document.querySelector('input[name="sub-antiH"]:checked').value);
-  const antiA1 = targets.includes("A") ? valueOf(document.querySelector('input[name="sub-antiA1"]:checked').value) : null;
-  const antiABResult = readSubtype("antiAB");
-  const a1Reagent = targets.includes("A") ? readSubtype("a1Reagent") : null;
-  const a2Reagent = targets.includes("A") ? readSubtype("a2Reagent") : null;
+  const antiA1 = valueOf(document.querySelector('input[name="sub-antiA1"]:checked').value);
   const numericStrength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
   const antiA = numericStrength(r.antiA), antiB = numericStrength(r.antiB);
-  const antiAB = numericStrength(antiABResult);
-  let reverseSubtypeNote = "";
-  const observations = {antiA:r.antiA,antiB:r.antiB,antiAB:antiABResult,antiA1,antiH,a1Cell:a1Reagent,a2Cell:a2Reagent,bCell:r.bcell};
+  const observations = {antiA:r.antiA,antiB:r.antiB,antiAB:null,antiA1,antiH,a1Cell:null,a2Cell:null,bCell:r.bcell};
   const referenceGroups = antiA > 0 && antiB > 0 ? ["AB"] : targets;
   const matches = findSubgroupReferenceMatches(referenceGroups, observations);
-  if (targets.includes("A") && numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) === 0) reverseSubtypeNote = "A₁ cell 선택 반응으로 anti-A₁ 가능성을 확인하세요.";
-  else if (targets.includes("A") && numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) > 0) reverseSubtypeNote = "A₁/A₂ cell 모두 반응하여 anti-A₁ 특이성만으로 설명되지 않습니다. Unexpected antibody를 확인하세요.";
   const box = document.getElementById("subtypeResult");
   box.className = "subtype-outcome";
-  box.innerHTML = `<span>SUSPECTED SUBGROUP · REFERENCE SIMILARITY</span><strong>${matches.length ? "입력값과 유사한 subgroup reference 후보" : "비교 가능한 subgroup reference 후보 없음"}</strong>${matches.length ? `<div class="subgroup-match-list">${matches.map((match,index) => `<article><small>REFERENCE ${index+1} · ${match.group}</small><b>${match.phenotype}</b><em>Similarity ${match.similarity}%</em><p>${match.remarks.join(" · ")}</p></article>`).join("")}</div>` : ""}<div class="subtype-evidence"><b>Anti-A,B ${displayReaction(antiABResult)}</b><b>Anti-H ${displayReaction(antiH)}</b>${targets.includes("A") ? `<b>Anti-A₁ ${displayReaction(antiA1)}</b><b>A₁ cell ${displayReaction(a1Reagent)}</b><b>A₂ cell ${displayReaction(a2Reagent)}</b>` : ""}</div>${reverseSubtypeNote ? `<p>${reverseSubtypeNote}</p>` : ""}<p>이 reference는 subgroup 관련 행만 사용한 유사도 참고 지식이며 확정 진단 규칙이 아닙니다. 실제 검사 순서와 최종 판정은 검사실 SOP와 검증된 case data를 우선하고, 필요 시 adsorption–elution·타액검사·ABO genotyping을 시행하세요.</p>`;
+  box.innerHTML = `<span>SUSPECTED SUBGROUP · REFERENCE SIMILARITY</span><strong>${matches.length ? "현재 확보된 결과와 유사한 subgroup reference 후보" : "비교 가능한 subgroup reference 후보 없음"}</strong>${matches.length ? `<div class="subgroup-match-list">${matches.map((match,index) => `<article><small>REFERENCE ${index+1} · ${match.group}</small><b>${match.phenotype}</b><em>Similarity ${match.similarity}%</em><p>${match.remarks.join(" · ")}</p></article>`).join("")}</div>` : ""}<div class="subtype-evidence"><b>Anti-A₁ ${displayReaction(antiA1)}</b><b>Anti-H ${displayReaction(antiH)}</b></div><p>Reference table은 subgroup 후보 비교와 해석을 위한 내부 참고자료이며 추가검사 항목을 자동 생성하지 않습니다. 실제 검사 순서와 최종 판정은 검사실 SOP와 검증된 case data를 우선하고, 환자의 이상 패턴에 따라 필요한 확인검사를 선택하세요.</p>`;
 }
 
 function parseReferenceReaction(expected) {

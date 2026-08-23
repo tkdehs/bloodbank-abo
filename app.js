@@ -1,4 +1,5 @@
 const grades = ["0", "0.5+", "1+", "2+", "3+", "4+"];
+const SUBGROUP_REFERENCE_WORKUP_THRESHOLD = 88;
 const manualFrontGrades = [
   {label:"0", value:"0"}, {label:"0.5+", value:"0.5+"},
   {label:"1+ (MF)", value:"mf1"}, {label:"2+ (MF)", value:"mf2"},
@@ -314,25 +315,24 @@ function continueISAnalysis(r) {
       ${renderConflictSummary(classification)}
       ${renderHistoricalEvidence(classification)}
       <p>이 flag는 cold interference 확정이 아닙니다. 가능성을 우선 확인하기 위해 37℃ 조건 ABO 재검을 권장하며, Ab screening·자가대조 등 unexpected antibody 확인을 함께 검토하세요.</p>
-      <div id="warm25Area"></div>${subtypeAssessment.targets.length ? `<div id="subtypeArea"></div>` : ""}`;
+      <div id="warm25Area"></div>${subtypeAssessment.suspected ? `<div id="subtypeArea">${renderSubgroupStatus(subtypeAssessment,"is-conflict")}</div>` : ""}`;
     showWarm25Form(r, classification);
-    if (subtypeAssessment.targets.length) showSubtypeForm(subtypeAssessment.targets, r, subtypeAssessment);
+    bindSubtypeWorkup(subtypeAssessment, r, "is-conflict");
     box.scrollIntoView({behavior:"smooth", block:"nearest"});
     return;
   }
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const box = document.getElementById("isResult");
-  if (match && !subtypeAssessment.targets.length) {
+  if (match && !subtypeAssessment.suspected) {
     box.className = "is-outcome resolved";
     box.innerHTML = `<span>RESOLVED</span><strong>IS 재검에서 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${renderCandidateSummary(classification)}<p>초기 ABO 불일치가 수기법 IS 재검에서 해소되었습니다. RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`;
   } else if (match) {
     box.className = "is-outcome unresolved";
-    box.innerHTML = `<span>SUBGROUP HISTORY RETAINED</span><strong>IS 결과가 정상 패턴이어도 이전 forward abnormality는 해결 처리하지 않습니다.</strong>${renderCandidateSummary(classification)}<p>Initial(VISION)부터 현재 단계까지의 약한 반응·Mixed Field·반응 소실 이력을 근거로 ABO subgroup 가능성을 별도로 평가하세요.</p><div id="subtypeArea"></div>`;
-    showSubtypeForm(subtypeAssessment.targets, r, subtypeAssessment);
+    box.innerHTML = `<span>SUBGROUP_SUSPECTED</span><strong>IS 결과가 정상 패턴이어도 이전 forward abnormality 이력을 유지합니다.</strong>${renderCandidateSummary(classification)}<p>현재 active ABO discrepancy는 해소되었지만 subgroup 가능성은 별도 flag로 보존합니다.</p><div id="subtypeArea">${renderSubgroupStatus(subtypeAssessment,"is-normal")}</div>`;
+    bindSubtypeWorkup(subtypeAssessment, r, "is-normal");
   } else {
     const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
     const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
-    const subtypeTargets = subtypeAssessment.targets;
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
     const needs15Min = needs15MinuteIncubation(classification);
     box.className = "is-outcome unresolved";
@@ -349,12 +349,13 @@ function continueISAnalysis(r) {
       ${renderAbnormalityPathways(classification)}
       ${renderHistoricalEvidence(classification)}
       ${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule) : ""}
+      ${subtypeAssessment.suspected ? `<div id="subtypeArea">${renderSubgroupStatus(subtypeAssessment,"is-active")}</div>` : ""}
       ${needsWarm25 ? `<div id="warm25Area"></div>` : ""}
       ${needs15Min ? `<div id="manual15Area"></div>` : ""}
-      ${subtypeTargets.length && !needs15Min ? `<div id="subtypeArea"></div>` : ""}`;
+      `;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
     if (needs15Min) showManual15Form(r);
-    if (subtypeTargets.length && !needs15Min) showSubtypeForm(subtypeTargets, r, subtypeAssessment);
+    bindSubtypeWorkup(subtypeAssessment, r, "is-active");
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
@@ -535,16 +536,15 @@ function analyzeManual15(sourceResults) {
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const subtypeAssessment = assessSubgroupHistory(classification);
   const frontUnexpectedRule = match ? null : createUnexpectedRule(classification, "FRONT");
-  const subtypeTargets = subtypeAssessment.targets;
   const reactionChanges = render15MinuteComparison(sourceResults, r);
   const box = document.getElementById("manual15Result");
-  const subgroupHistoryPersists = subtypeTargets.length > 0;
+  const subgroupHistoryPersists = subtypeAssessment.suspected;
   box.className = `is-outcome ${match && !subgroupHistoryPersists ? "resolved" : "unresolved"}`;
   box.innerHTML = match && !subgroupHistoryPersists
     ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
-    : `<span>${match ? "SUBGROUP HISTORY RETAINED" : "REANALYZED"}</span><strong>${match ? "15분 후 반응이 정상화되어도 이전 forward abnormality는 해결 처리하지 않습니다." : "15분 후 ABO 전체 결과를 Candidate ABO부터 다시 분석했습니다."}</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${match ? "" : renderAbnormalityPathways(classification, "15MIN")}<p>${match ? "Initial(VISION) → Manual IS → RT 15분 전체 이력을 근거로 subgroup 가능성을 계속 평가합니다." : "한쪽 pathway가 해결되어도 남은 abnormality 또는 이전 단계의 subgroup 관련 이력이 있어 전체 상태를 UNRESOLVED로 유지합니다."}</p>${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}${subtypeTargets.length ? `<div id="subtypeArea"></div>` : ""}`;
+    : `<span>${match ? "SUBGROUP_SUSPECTED" : "REANALYZED"}</span><strong>${match ? "15분 후 반응이 정상화되어도 이전 forward abnormality 이력을 유지합니다." : "15분 후 ABO 전체 결과를 Candidate ABO부터 다시 분석했습니다."}</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${match ? "" : renderAbnormalityPathways(classification, "15MIN")}<p>${match ? "현재 active ABO discrepancy는 해소되었지만 subgroup suspicion은 별도 상태로 보존합니다." : "현재 active discrepancy를 유지하면서 과거 단계의 subgroup suspicion을 별도로 관리합니다."}</p>${subtypeAssessment.suspected ? `<div id="subtypeArea-rt15">${renderSubgroupStatus(subtypeAssessment,"rt15")}</div>` : ""}${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}`;
   if (frontUnexpectedRule) showWarm25Form(r, {...classification,front:{...classification.front,unexpectedKeys:frontUnexpectedRule.abnormalKeys}});
-  if (subtypeTargets.length) showSubtypeForm(subtypeTargets, r, subtypeAssessment);
+  bindSubtypeWorkup(subtypeAssessment, r, "rt15");
 }
 
 function assessSubgroupHistory(currentClassification = null) {
@@ -601,8 +601,49 @@ function assessSubgroupHistory(currentClassification = null) {
     evidence.push({id:"rt15|overall|UNEXPLAINED",stage:stageLabels.rt15,key:"ABO 전체",type:"UNEXPLAINED_15MIN_PATTERN",detail:"하나의 정상 ABO pattern으로 명확히 설명되지 않음",target:null});
   }
 
-  const historicalSupport = targets.size > 0 && Number.isFinite(window.aboHistoricalData?.contexts?.SUBGROUP) ? window.aboHistoricalData.contexts.SUBGROUP : null;
-  return {targets:[...targets],evidence,historicalSupport,stages:orderedStages.map(stage => ({stage:stageLabels[stage],results:aboCaseHistory[stage]}))};
+  const initialWeakReaction = Object.fromEntries(["antiA","antiB"].map(key => {
+    const value = initial?.[key], strength = value == null ? 0 : reactionStrength(value);
+    return [key,Boolean(isMixedReaction(value) || (strength > 0 && strength < 4))];
+  }));
+  const manualReproduction = Object.fromEntries(["antiA","antiB"].map(key => {
+    const value = manualIS?.[key], strength = value == null ? 0 : reactionStrength(value);
+    return [key,Boolean(initialWeakReaction[key] && (isMixedReaction(value) || (strength > 0 && strength < 4)))];
+  }));
+  const mixedField = Object.fromEntries(orderedStages.map(stage => [stage,{antiA:isMixedReaction(aboCaseHistory[stage].antiA),antiB:isMixedReaction(aboCaseHistory[stage].antiB)}]));
+  const incubationChanges = aboCaseHistory.manualIS && aboCaseHistory.rt15 ? Object.fromEntries(["antiA","antiB"].map(key => [key,classifyReactionChange(aboCaseHistory.manualIS[key],aboCaseHistory.rt15[key])])) : null;
+
+  const latestStage = orderedStages[orderedStages.length - 1];
+  const latest = latestStage ? aboCaseHistory[latestStage] : null;
+  const targetList = [...targets];
+  const referenceGroups = targetList.length > 1 ? ["AB",...targetList] : targetList;
+  const referenceMatches = latest && referenceGroups.length ? findSubgroupReferenceMatches(referenceGroups,{
+    antiA:latest.antiA,antiB:latest.antiB,antiAB:null,antiA1:null,antiH:null,a1Cell:latest.a1cell,a2Cell:null,bCell:latest.bcell
+  }) : [];
+  const commonPhenotypes = new Set(["A1","B","A1B"]);
+  const meaningfulReference = referenceMatches.find(match => !commonPhenotypes.has(match.phenotype) && match.similarity >= SUBGROUP_REFERENCE_WORKUP_THRESHOLD) || null;
+
+  const workupReasons = [];
+  ["antiA","antiB"].forEach(key => {
+    const value = manualIS?.[key], strength = value == null ? 0 : reactionStrength(value);
+    if (manualReproduction[key]) workupReasons.push(`${key === "antiA" ? "Anti-A" : "Anti-B"} weak reaction이 Manual IS에서 재현됨`);
+    if (initialWeakReaction[key] && isMixedReaction(value)) workupReasons.push(`${key === "antiA" ? "Anti-A" : "Anti-B"} Mixed Field가 Manual IS에서도 지속됨`);
+    if (!initialWeakReaction[key] && (isMixedReaction(value) || (strength > 0 && strength < 4))) workupReasons.push(`${key === "antiA" ? "Anti-A" : "Anti-B"} 비정상 반응이 Manual IS에서 확인됨`);
+  });
+  if (meaningfulReference) workupReasons.push(`현재 pattern이 ${meaningfulReference.phenotype} reference와 ${meaningfulReference.similarity}% 유사함`);
+
+  const suspected = evidence.some(item => ["antiA","antiB"].includes(item.key));
+  const workupRequired = suspected && workupReasons.length > 0;
+  const historicalSupport = suspected && Number.isFinite(window.aboHistoricalData?.contexts?.SUBGROUP) ? window.aboHistoricalData.contexts.SUBGROUP : null;
+  const features = {initialWeakReaction,manualReproduction,incubationChanges,mixedField,discrepancyLocation:currentClassification?.location || null,subgroupSuspicionHistory:evidence.map(item => ({stage:item.stage,target:item.key,type:item.type,detail:item.detail}))};
+  const assessment = {
+    status:workupRequired ? "SUBGROUP_WORKUP_REQUIRED" : suspected ? "SUBGROUP_SUSPECTED" : null,
+    suspected,workupRequired,targets:targetList,evidence,workupReasons:[...new Set(workupReasons)],meaningfulReference,referenceMatches,historicalSupport,
+    features,
+    stages:orderedStages.map(stage => ({stage:stageLabels[stage],results:{...aboCaseHistory[stage]}}))
+  };
+  aboCaseHistory.features = {...features};
+  aboCaseHistory.subgroupSuspicion = {status:assessment.status,targets:[...targetList],workupReasons:[...assessment.workupReasons],history:[...features.subgroupSuspicionHistory]};
+  return assessment;
 }
 
 function renderSubgroupHistory(assessment) {
@@ -610,8 +651,28 @@ function renderSubgroupHistory(assessment) {
   return `<div class="subgroup-history"><small>CASE HISTORY · INITIAL → IS → RT 15분</small><strong>이전 단계의 forward abnormality 유지</strong>${assessment.evidence.map(item => `<div><b>${item.stage}</b><span>${item.key === "antiA" ? "Anti-A" : item.key === "antiB" ? "Anti-B" : item.key}</span><em>${item.type}</em><p>${item.detail}</p></div>`).join("")}${assessment.historicalSupport ? `<p>검증된 비식별 case data의 subgroup/항원 약화 범주 ${assessment.historicalSupport}건은 보조적 맥락으로만 사용합니다.</p>` : ""}</div>`;
 }
 
-function showSubtypeForm(targets, manualResult, assessment = null) {
-  const area = document.getElementById("subtypeArea");
+function renderSubgroupStatus(assessment, scope) {
+  if (!assessment?.suspected) return "";
+  const initialTargets = [assessment.features.initialWeakReaction.antiA ? "A" : null,assessment.features.initialWeakReaction.antiB ? "B" : null].filter(Boolean);
+  const reproduced = Object.values(assessment.features.manualReproduction).some(Boolean);
+  const message = initialTargets.length && !reproduced
+    ? `초기 장비에서 약한 ${initialTargets.join("/")} 항원 반응이 관찰되었으나 수기검사에서 재현되지 않았습니다. ${initialTargets.join("/")} subgroup 가능성은 완전히 배제하지 않습니다.`
+    : "초기 또는 반복검사에서 subgroup 가능성을 시사하는 forward typing abnormality가 확인되었습니다.";
+  return `<div class="subgroup-status ${assessment.workupRequired ? "required" : "suspected"}"><small>${assessment.status}</small><strong>${assessment.workupRequired ? "아형검사 확인 필요" : "아형 가능성 있음"}</strong><p>${message}</p>${renderSubgroupHistory(assessment)}${assessment.workupRequired ? `<div class="subgroup-workup-reasons"><b>Workup trigger</b><ul>${assessment.workupReasons.map(reason => `<li>${reason}</li>`).join("")}</ul></div><button type="button" class="is-analyze-button" id="startSubtypeWorkupButton-${scope}">아형검사 진행 <span>→</span></button><div id="subtypeFormArea-${scope}"></div>` : `<p><b>현재 active discrepancy를 우선 재분류하며, 이 단계에서는 아형검사를 강제하지 않습니다.</b></p>`}</div>`;
+}
+
+function bindSubtypeWorkup(assessment, manualResult, scope) {
+  if (!assessment?.workupRequired) return;
+  const button = document.getElementById(`startSubtypeWorkupButton-${scope}`);
+  if (!button) return;
+  button.addEventListener("click", () => {
+    button.hidden = true;
+    showSubtypeForm(assessment.targets, manualResult, assessment, scope);
+  });
+}
+
+function showSubtypeForm(targets, manualResult, assessment = null, scope = "default") {
+  const area = document.getElementById(`subtypeFormArea-${scope}`) || document.getElementById("subtypeArea");
   const subtypeGrades = grades.map(grade => ({label:grade, value:grade}));
   const testRows = [
     {id:"antiA1", name:"Anti-A₁", desc:"A₁ lectin", grades:subtypeGrades},
@@ -619,21 +680,20 @@ function showSubtypeForm(targets, manualResult, assessment = null) {
   ];
   area.innerHTML = `<div class="subtype-form"><div class="is-form-head"><span>04</span><div><strong>${targets.join("/")}형 아형검사</strong><small>검사실 SOP 선택 추가검사</small></div></div>
     <div class="subtype-note">Reference table과 검사 workflow를 분리합니다. 현재 아형검사 입력은 Anti-A₁과 Anti-H만 시행하며, reference의 나머지 항목을 자동 요구하지 않습니다.</div>
-    ${renderSubgroupHistory(assessment)}
-    <div class="is-test-list">${testRows.map(test => `<div class="is-test-row"><span>${test.name}<small>${test.desc}</small></span><div class="is-grade-options">${test.grades.map((grade,i) => `<input type="radio" id="sub-${test.id}-${i}" name="sub-${test.id}" value="${grade.value}" ${i===0?"checked":""}><label for="sub-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div>
-    <button type="button" class="is-analyze-button" id="analyzeSubtypeButton">아형 의심 결과 확인 <span>→</span></button><div id="subtypeResult"></div></div>`;
-  document.getElementById("analyzeSubtypeButton").addEventListener("click", () => analyzeSubtype(targets, manualResult));
+    <div class="is-test-list">${testRows.map(test => `<div class="is-test-row"><span>${test.name}<small>${test.desc}</small></span><div class="is-grade-options">${test.grades.map((grade,i) => `<input type="radio" id="sub-${scope}-${test.id}-${i}" name="sub-${scope}-${test.id}" value="${grade.value}" ${i===0?"checked":""}><label for="sub-${scope}-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div>
+    <button type="button" class="is-analyze-button" id="analyzeSubtypeButton-${scope}">아형 의심 결과 확인 <span>→</span></button><div id="subtypeResult-${scope}"></div></div>`;
+  document.getElementById(`analyzeSubtypeButton-${scope}`).addEventListener("click", () => analyzeSubtype(targets, manualResult, scope));
 }
 
-function analyzeSubtype(targets, r) {
-  const antiH = valueOf(document.querySelector('input[name="sub-antiH"]:checked').value);
-  const antiA1 = valueOf(document.querySelector('input[name="sub-antiA1"]:checked').value);
+function analyzeSubtype(targets, r, scope) {
+  const antiH = valueOf(document.querySelector(`input[name="sub-${scope}-antiH"]:checked`).value);
+  const antiA1 = valueOf(document.querySelector(`input[name="sub-${scope}-antiA1"]:checked`).value);
   const numericStrength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
   const antiA = numericStrength(r.antiA), antiB = numericStrength(r.antiB);
   const observations = {antiA:r.antiA,antiB:r.antiB,antiAB:null,antiA1,antiH,a1Cell:null,a2Cell:null,bCell:r.bcell};
   const referenceGroups = antiA > 0 && antiB > 0 ? ["AB"] : targets;
   const matches = findSubgroupReferenceMatches(referenceGroups, observations);
-  const box = document.getElementById("subtypeResult");
+  const box = document.getElementById(`subtypeResult-${scope}`);
   box.className = "subtype-outcome";
   box.innerHTML = `<span>SUSPECTED SUBGROUP · REFERENCE SIMILARITY</span><strong>${matches.length ? "현재 확보된 결과와 유사한 subgroup reference 후보" : "비교 가능한 subgroup reference 후보 없음"}</strong>${matches.length ? `<div class="subgroup-match-list">${matches.map((match,index) => `<article><small>REFERENCE ${index+1} · ${match.group}</small><b>${match.phenotype}</b><em>Similarity ${match.similarity}%</em><p>${match.remarks.join(" · ")}</p></article>`).join("")}</div>` : ""}<div class="subtype-evidence"><b>Anti-A₁ ${displayReaction(antiA1)}</b><b>Anti-H ${displayReaction(antiH)}</b></div><p>Reference table은 subgroup 후보 비교와 해석을 위한 내부 참고자료이며 추가검사 항목을 자동 생성하지 않습니다. 실제 검사 순서와 최종 판정은 검사실 SOP와 검증된 case data를 우선하고, 환자의 이상 패턴에 따라 필요한 확인검사를 선택하세요.</p>`;
 }

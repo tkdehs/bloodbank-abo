@@ -320,6 +320,7 @@ function continueISAnalysis(r) {
   } else {
     const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
     const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
+    const subtypeTargets = detectSubtypeTargets(classification);
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
     const needs15Min = needs15MinuteIncubation(classification);
     box.className = "is-outcome unresolved";
@@ -337,9 +338,11 @@ function continueISAnalysis(r) {
       ${renderHistoricalEvidence(classification)}
       ${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule) : ""}
       ${needsWarm25 ? `<div id="warm25Area"></div>` : ""}
-      ${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
+      ${needs15Min ? `<div id="manual15Area"></div>` : ""}
+      ${subtypeTargets.length && !needs15Min ? `<div id="subtypeArea"></div>` : ""}`;
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
     if (needs15Min) showManual15Form(r);
+    if (subtypeTargets.length && !needs15Min) showSubtypeForm(subtypeTargets, r);
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 }
@@ -530,12 +533,13 @@ function analyzeManual15(sourceResults) {
 }
 
 function detectSubtypeTargets(classification) {
-  if (!classification?.front || classification.candidateABO === "CANDIDATE_AMBIGUOUS") return [];
+  if (classification.candidateABO === "CANDIDATE_AMBIGUOUS") return [];
   const subgroupAbnormalities = classification.abnormalities.filter(item =>
     item.location === "FRONT" && (item.type === "EXPECTED_REACTION_WEAK/MISSING" || item.type === "MIXED_FIELD")
   );
   const candidate = classification.candidateABO;
-  const aSuspected = (candidate === "A" || candidate === "AB") && subgroupAbnormalities.some(item => item.key === "antiA");
+  const aCellUnexpected = classification.abnormalities.some(item => item.location === "BACK" && item.key === "a1cell" && item.type === "UNEXPECTED_REACTION_PRESENT");
+  const aSuspected = (candidate === "A" || candidate === "AB") && (subgroupAbnormalities.some(item => item.key === "antiA") || aCellUnexpected);
   const bSuspected = (candidate === "B" || candidate === "AB") && subgroupAbnormalities.some(item => item.key === "antiB");
   return [aSuspected ? "A" : null, bSuspected ? "B" : null].filter(Boolean);
 }
@@ -543,46 +547,63 @@ function detectSubtypeTargets(classification) {
 function showSubtypeForm(targets, manualResult) {
   const area = document.getElementById("subtypeArea");
   const subtypeGrades = grades.map(grade => ({label:grade, value:grade}));
-  const testRows = [];
-  if (targets.includes("A")) testRows.push({id:"antiA1", name:"Anti-A₁", desc:"A₁ lectin"});
-  testRows.push({id:"antiH", name:"Anti-H", desc:"H lectin"});
-  area.innerHTML = `<div class="subtype-form"><div class="is-form-head"><span>04</span><div><strong>${targets.join("/")}형 아형검사</strong><small>Lectin 반응 성상 입력</small></div></div>
-    <div class="subtype-note">${targets.includes("A") ? "Anti-A₁과 Anti-H" : "Anti-H"} 결과를 입력하세요.</div>
-    <div class="is-test-list">${testRows.map(test => `<div class="is-test-row"><span>${test.name}<small>${test.desc}</small></span><div class="is-grade-options">${subtypeGrades.map((grade,i) => `<input type="radio" id="sub-${test.id}-${i}" name="sub-${test.id}" value="${grade.value}" ${i===0?"checked":""}><label for="sub-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div>
+  const testRows = [{id:"antiAB", name:"Anti-A,B", desc:"A/B 항원 확인", grades:manualFrontGrades}];
+  if (targets.includes("A")) testRows.push(
+    {id:"antiA1", name:"Anti-A₁", desc:"A₁ lectin", grades:subtypeGrades},
+    {id:"antiH", name:"Anti-H", desc:"H lectin", grades:subtypeGrades},
+    {id:"a1Reagent", name:"A₁ cell", desc:"아형검사 시약혈구", grades:subtypeGrades},
+    {id:"a2Reagent", name:"A₂ cell", desc:"아형검사 시약혈구", grades:subtypeGrades}
+  );
+  else testRows.push({id:"antiH", name:"Anti-H", desc:"H lectin", grades:subtypeGrades});
+  area.innerHTML = `<div class="subtype-form"><div class="is-form-head"><span>04</span><div><strong>${targets.join("/")}형 아형검사</strong><small>DiaMed ABO identification chart 기반 참고 입력</small></div></div>
+    <div class="subtype-note">일반 ABO 검사가 아닌 아형 확인 영역입니다. Anti-A,B·lectin${targets.includes("A") ? "·A₁/A₂ reagent cell" : ""} 결과를 함께 비교하세요.</div>
+    <div class="is-test-list">${testRows.map(test => `<div class="is-test-row"><span>${test.name}<small>${test.desc}</small></span><div class="is-grade-options">${test.grades.map((grade,i) => `<input type="radio" id="sub-${test.id}-${i}" name="sub-${test.id}" value="${grade.value}" ${i===0?"checked":""}><label for="sub-${test.id}-${i}">${grade.label}</label>`).join("")}</div></div>`).join("")}</div>
     <button type="button" class="is-analyze-button" id="analyzeSubtypeButton">아형 의심 결과 확인 <span>→</span></button><div id="subtypeResult"></div></div>`;
   document.getElementById("analyzeSubtypeButton").addEventListener("click", () => analyzeSubtype(targets, manualResult));
 }
 
 function analyzeSubtype(targets, r) {
+  const readSubtype = name => {
+    const raw = document.querySelector(`input[name="sub-${name}"]:checked`).value;
+    return raw.startsWith("mf") ? raw : valueOf(raw);
+  };
   const antiH = valueOf(document.querySelector('input[name="sub-antiH"]:checked').value);
   const antiA1 = targets.includes("A") ? valueOf(document.querySelector('input[name="sub-antiA1"]:checked').value) : null;
+  const antiABResult = readSubtype("antiAB");
+  const a1Reagent = targets.includes("A") ? readSubtype("a1Reagent") : null;
+  const a2Reagent = targets.includes("A") ? readSubtype("a2Reagent") : null;
   const results = [];
   const numericStrength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
   const antiA = numericStrength(r.antiA), antiB = numericStrength(r.antiB);
+  const antiAB = numericStrength(antiABResult);
   const aMF = typeof r.antiA === "string" && r.antiA.startsWith("mf");
   const bMF = typeof r.antiB === "string" && r.antiB.startsWith("mf");
+  const antiABMF = typeof antiABResult === "string" && antiABResult.startsWith("mf");
+  let reverseSubtypeNote = "";
 
   if (targets.includes("A")) {
     let suspected;
-    if (antiA1 > 0) suspected = "A₁ 또는 A₁B 유사 성상";
-    else if (antiH >= 2 && antiH <= 3 && antiA >= 3 && !aMF) suspected = "A₂ 또는 A₂B 아형";
-    else if (antiH >= 3 && (aMF || antiA === 2)) suspected = "A₃ 계열 아형";
-    else if (antiH >= 3 && antiA > 0 && antiA <= 1) suspected = "Aₓ 계열 아형";
-    else if (antiH >= 3 && antiA === 0) suspected = "Ael 등 매우 약한 A 아형";
+    if (antiA1 > 0) suspected = "A₁/A₁B-like 또는 variant/acquired pattern — 자동 확정 불가";
+    else if (antiH >= 2 && antiH <= 3 && antiA >= 3 && antiAB >= 3 && !aMF && !antiABMF) suspected = "A₂ 또는 A₂B chart-compatible pattern";
+    else if (antiH >= 3 && (aMF || antiABMF || antiA === 2)) suspected = "A₃ 계열 chart-compatible pattern";
+    else if (antiH >= 3 && antiA <= 1 && antiAB > antiA) suspected = "Aₓ 계열 chart-compatible pattern";
+    else if (antiH >= 3 && antiA === 0 && antiAB === 0) suspected = "Ael 등 매우 약한 A pattern — adsorption/elution 필요";
     else suspected = "A 아형 가능 — 혈청학적 패턴만으로 세부형 미확정";
     results.push({group:"A", suspected});
+    if (numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) === 0) reverseSubtypeNote = "A₁ cell 선택 반응으로 anti-A₁ 가능성을 확인하세요.";
+    else if (numericStrength(a1Reagent) > 0 && numericStrength(a2Reagent) > 0) reverseSubtypeNote = "A₁/A₂ cell 모두 반응하여 anti-A₁ 특이성만으로 설명되지 않습니다. Unexpected antibody를 확인하세요.";
   }
   if (targets.includes("B")) {
     let suspected;
-    if (bMF || antiB === 2) suspected = "B₃ 계열 아형";
-    else if (antiB > 0 && antiB <= 1) suspected = "Bₓ 계열 아형";
-    else if (antiB === 0) suspected = "Bel 등 매우 약한 B 아형";
+    if (bMF || antiABMF || antiB === 2) suspected = "B₃ 계열 chart-compatible pattern";
+    else if (antiB <= 1 && antiAB > antiB) suspected = "Bₓ 계열 chart-compatible pattern";
+    else if (antiB === 0 && antiAB === 0) suspected = "Bel 등 매우 약한 B pattern — adsorption/elution 필요";
     else suspected = "B 아형 가능 — 추가 확인 필요";
     results.push({group:"B", suspected});
   }
   const box = document.getElementById("subtypeResult");
   box.className = "subtype-outcome";
-  box.innerHTML = `<span>SUSPECTED SUBGROUP</span>${results.map(item => `<strong>${item.suspected}</strong>`).join("")}<p>Anti-H 반응만으로 B 아형을 확정할 수 없습니다. Anti-A,B, 흡착·용출, 타액검사 및 ABO 유전형 검사 등 기관 SOP의 확정검사를 시행하세요.</p>`;
+  box.innerHTML = `<span>SUSPECTED SUBGROUP · REFERENCE PATTERN</span>${results.map(item => `<strong>${item.suspected}</strong>`).join("")}<div class="subtype-evidence"><b>Anti-A,B ${displayReaction(antiABResult)}</b><b>Anti-H ${displayReaction(antiH)}</b>${targets.includes("A") ? `<b>Anti-A₁ ${displayReaction(antiA1)}</b><b>A₁ cell ${displayReaction(a1Reagent)}</b><b>A₂ cell ${displayReaction(a2Reagent)}</b>` : ""}</div>${reverseSubtypeNote ? `<p>${reverseSubtypeNote}</p>` : ""}<p>사진의 identification chart는 참고 패턴이며 확정 알고리즘이 아닙니다. MF는 수혈/이식 이력과 함께 평가하고, 매우 약한 아형은 adsorption–elution·타액검사·ABO genotyping 등 기관 SOP의 확정검사가 필요합니다.</p>`;
 }
 
 const aboExpectedPatterns = {

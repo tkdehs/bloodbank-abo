@@ -22,6 +22,13 @@ const createABOCaseState = () => ({
   has_rt15_forward_weak:false,
   has_warm37_forward_weak:false,
   has_forward_mf:false,
+  a_antigen_ever_detected:false,
+  b_antigen_ever_detected:false,
+  a_antigen_weak_history:false,
+  b_antigen_weak_history:false,
+  a_antigen_mf_history:false,
+  b_antigen_mf_history:false,
+  candidate_family:null,
   ab_subgroup_suspected:false,
   subgroup_suspected:false,
   subgroup_workup_required:false
@@ -35,13 +42,24 @@ function recordABOHistory(stage, results) {
   const forwardValues = [results.antiA,results.antiB];
   const hasWeak = forwardValues.some(value => isMixedReaction(value) || (reactionStrength(value) > 0 && reactionStrength(value) < 4));
   const hasMF = forwardValues.some(isMixedReaction);
-  const bothPositive = forwardValues.every(value => reactionStrength(value) > 0);
+  const antiAStrength = reactionStrength(results.antiA), antiBStrength = reactionStrength(results.antiB);
+  aboCaseState.a_antigen_ever_detected ||= antiAStrength > 0;
+  aboCaseState.b_antigen_ever_detected ||= antiBStrength > 0;
+  aboCaseState.a_antigen_weak_history ||= antiAStrength > 0 && antiAStrength < 4;
+  aboCaseState.b_antigen_weak_history ||= antiBStrength > 0 && antiBStrength < 4;
+  aboCaseState.a_antigen_mf_history ||= isMixedReaction(results.antiA);
+  aboCaseState.b_antigen_mf_history ||= isMixedReaction(results.antiB);
   if (stage === "initial") aboCaseState.has_initial_forward_weak ||= hasWeak;
   if (stage === "manualIS") aboCaseState.has_manual_forward_weak ||= hasWeak;
   if (stage === "rt15") aboCaseState.has_rt15_forward_weak ||= hasWeak;
   if (stage === "warm37") aboCaseState.has_warm37_forward_weak ||= hasWeak;
   aboCaseState.has_forward_mf ||= hasMF;
-  aboCaseState.ab_subgroup_suspected ||= bothPositive && hasWeak;
+  const bothAntigensEverDetected = aboCaseState.a_antigen_ever_detected && aboCaseState.b_antigen_ever_detected;
+  const eitherAntigenWeakOrMF = aboCaseState.a_antigen_weak_history || aboCaseState.b_antigen_weak_history || aboCaseState.a_antigen_mf_history || aboCaseState.b_antigen_mf_history;
+  aboCaseState.ab_subgroup_suspected ||= bothAntigensEverDetected && eitherAntigenWeakOrMF;
+  if (aboCaseState.ab_subgroup_suspected) aboCaseState.candidate_family = "AB_SUBGROUP";
+  else if (aboCaseState.a_antigen_ever_detected && (aboCaseState.a_antigen_weak_history || aboCaseState.a_antigen_mf_history)) aboCaseState.candidate_family ||= "A_SUBGROUP";
+  else if (aboCaseState.b_antigen_ever_detected && (aboCaseState.b_antigen_weak_history || aboCaseState.b_antigen_mf_history)) aboCaseState.candidate_family ||= "B_SUBGROUP";
   aboCaseState.subgroup_suspected ||= hasWeak || hasMF;
 }
 
@@ -524,7 +542,8 @@ function renderExpectedActual(result) {
 function renderCandidateSummary(analysis) {
   const candidate = analysis.candidateABO;
   const tied = candidate === "CANDIDATE_AMBIGUOUS" ? `<em>동률: ${analysis.tiedCandidates.join(", ")}</em>` : "";
-  return `<div class="candidate-summary"><small>Candidate ABO · 불일치 분석 기준 phenotype</small><strong>${candidate}</strong>${tied}<span>Classification · ${analysis.classification}</span><i>최종 ABO 확정 아님</i></div>${renderRhDGuidance(analysis.rhD)}`;
+  const family = aboCaseState.candidate_family;
+  return `<div class="candidate-summary"><small>Current-stage nearest phenotype</small><strong>${candidate}</strong>${tied}${family ? `<em>History-generated family · ${family}</em>` : ""}<span>Classification · ${analysis.classification}</span><i>최종 ABO 확정 아님</i></div>${renderRhDGuidance(analysis.rhD)}`;
 }
 
 function renderHistoricalEvidence(analysis) {
@@ -667,10 +686,9 @@ function assessSubgroupHistory(currentClassification = null) {
   const latestStage = orderedStages[orderedStages.length - 1];
   const latest = latestStage ? aboCaseHistory[latestStage] : null;
   const targetList = [...targets];
-  const referenceGroups = aboCaseState.ab_subgroup_suspected ? ["AB",...targetList] : targetList.length > 1 ? ["AB",...targetList] : targetList;
-  const referenceMatches = latest && referenceGroups.length ? findSubgroupReferenceMatches(referenceGroups,{
-    antiA:latest.antiA,antiB:latest.antiB,antiAB:null,antiA1:null,antiH:null,a1Cell:latest.a1cell,a2Cell:null,bCell:latest.bcell
-  }) : [];
+  const candidateFamily = aboCaseState.candidate_family;
+  const referenceGroups = candidateFamily === "AB_SUBGROUP" ? ["AB"] : candidateFamily === "A_SUBGROUP" ? ["A"] : candidateFamily === "B_SUBGROUP" ? ["B"] : targetList.length > 1 ? ["AB",...targetList] : targetList;
+  const referenceMatches = latest && referenceGroups.length ? findSubgroupMatchesAcrossCase(referenceGroups) : [];
   const commonPhenotypes = new Set(["A1","B","A1B"]);
   const meaningfulReference = referenceMatches.find(match => !commonPhenotypes.has(match.phenotype) && match.similarity >= SUBGROUP_REFERENCE_WORKUP_THRESHOLD) || null;
   const reverseTypingHistory = orderedStages.flatMap(stage => {
@@ -721,7 +739,7 @@ function assessSubgroupHistory(currentClassification = null) {
   const assessment = {
     status:workupRequired ? "SUBGROUP_WORKUP_REQUIRED" : suspected ? "SUBGROUP_SUSPECTED" : null,
     suspected,workupRequired,optionalWorkupAvailable,targets:targetList,evidence,workupReasons:[...new Set(workupReasons)],meaningfulReference,referenceMatches,historicalSupport,reverseTypingHistory,reverseReferenceMatches,parallelReverseCauses,
-    caseState:{...aboCaseState},abSubgroupSuspected:aboCaseState.ab_subgroup_suspected,
+    caseState:{...aboCaseState},candidateFamily,abSubgroupSuspected:aboCaseState.ab_subgroup_suspected,
     features,
     stages:orderedStages.map(stage => ({stage:stageLabels[stage],results:{...aboCaseHistory[stage]}}))
   };
@@ -743,7 +761,7 @@ function renderReverseSubgroupCorrelation(assessment) {
 function renderSubgroupStatus(assessment, scope) {
   if (!assessment?.suspected) return "";
   const abMessage = assessment.abSubgroupSuspected ? " Anti-A와 Anti-B가 모두 양성이면서 한쪽 또는 양쪽이 4+ 미만이므로 AB 계열 subgroup 가능성도 함께 고려합니다." : "";
-  return `<div class="subgroup-status suspected"><small>SUBGROUP_SUSPECTED · 독립 병렬 flag</small><strong>ABO 아형 가능성</strong><p>검사 과정 중 Forward typing의 Anti-A 또는 Anti-B에서 약한 반응 또는 Mixed Field가 확인되었습니다. 다른 원인도 함께 고려하면서 ABO 아형검사를 확인해 주세요.${abMessage}</p><p><b>중요: weak/MF reaction은 ABO subgroup을 확정하는 결과가 아니므로, 아형으로 자동 확정하거나 최종 ABO를 변경하지 마세요.</b></p>${renderSubgroupHistory(assessment)}${renderReverseSubgroupCorrelation(assessment)}<button type="button" class="is-analyze-button" id="startSubtypeWorkupButton-${scope}">아형검사 <span>→</span></button><div id="subtypeFormArea-${scope}"></div></div>`;
+  return `<div class="subgroup-status suspected"><small>SUBGROUP_SUSPECTED · 독립 병렬 flag</small><strong>ABO 아형 가능성</strong>${assessment.candidateFamily ? `<div class="candidate-family"><span>Candidate family</span><b>${assessment.candidateFamily}</b><em>최종 ABO 확정 아님</em></div>` : ""}<p>검사 과정 중 Forward typing의 Anti-A 또는 Anti-B에서 약한 반응 또는 Mixed Field가 확인되었습니다. 다른 원인도 함께 고려하면서 ABO 아형검사를 확인해 주세요.${abMessage}</p><p><b>중요: weak/MF reaction은 ABO subgroup을 확정하는 결과가 아니므로, 아형으로 자동 확정하거나 최종 ABO를 변경하지 마세요.</b></p>${renderSubgroupHistory(assessment)}${renderReverseSubgroupCorrelation(assessment)}<button type="button" class="is-analyze-button" id="startSubtypeWorkupButton-${scope}">아형검사 <span>→</span></button><div id="subtypeFormArea-${scope}"></div></div>`;
 }
 
 function bindSubtypeWorkup(assessment, manualResult, scope) {
@@ -773,15 +791,12 @@ function showSubtypeForm(targets, manualResult, assessment = null, scope = "defa
 function analyzeSubtype(targets, r, scope) {
   const antiH = valueOf(document.querySelector(`input[name="sub-${scope}-antiH"]:checked`).value);
   const antiA1 = valueOf(document.querySelector(`input[name="sub-${scope}-antiA1"]:checked`).value);
-  const numericStrength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
-  const antiA = numericStrength(r.antiA), antiB = numericStrength(r.antiB);
-  const observations = {antiA:r.antiA,antiB:r.antiB,antiAB:null,antiA1,antiH,a1Cell:null,a2Cell:null,bCell:r.bcell};
   recordAdditionalCaseHistory("ABO subgroup", {antiA1,antiH,sourceForward:{antiA:r.antiA,antiB:r.antiB},scope});
-  const referenceGroups = antiA > 0 && antiB > 0 ? ["AB"] : targets;
-  const matches = findSubgroupReferenceMatches(referenceGroups, observations);
+  const cumulativeAssessment = assessSubgroupHistory(classifyISDiscrepancy(r));
+  const matches = cumulativeAssessment.referenceMatches;
   const box = document.getElementById(`subtypeResult-${scope}`);
   box.className = "subtype-outcome";
-  box.innerHTML = `<span>SUSPECTED SUBGROUP · REFERENCE SIMILARITY</span><strong>${matches.length ? "현재 확보된 결과와 유사한 subgroup reference 후보" : "비교 가능한 subgroup reference 후보 없음"}</strong>${matches.length ? `<div class="subgroup-match-list">${matches.map((match,index) => `<article><small>REFERENCE ${index+1} · ${match.group}</small><b>${match.phenotype}</b><em>Similarity ${match.similarity}%</em><p>${match.remarks.join(" · ")}</p></article>`).join("")}</div>` : ""}<div class="subtype-evidence"><b>Anti-A₁ ${displayReaction(antiA1)}</b><b>Anti-H ${displayReaction(antiH)}</b></div><p>Reference table은 subgroup 후보 비교와 해석을 위한 내부 참고자료이며 추가검사 항목을 자동 생성하지 않습니다. 실제 검사 순서와 최종 판정은 검사실 SOP와 검증된 case data를 우선하고, 환자의 이상 패턴에 따라 필요한 확인검사를 선택하세요.</p>`;
+  box.innerHTML = `<span>SUSPECTED SUBGROUP · CUMULATIVE REFERENCE SIMILARITY</span><strong>${matches.length ? `${cumulativeAssessment.candidateFamily || "Subgroup"} family의 누적 결과와 유사한 reference 후보` : "비교 가능한 subgroup reference 후보 없음"}</strong>${matches.length ? `<div class="subgroup-match-list">${matches.map((match,index) => `<article><small>REFERENCE ${index+1} · ${match.group}</small><b>${match.phenotype}</b><em>Cumulative similarity ${match.similarity}%</em><p>${match.stageSimilarities.map(item => `${item.stage} ${item.similarity}%`).join(" · ")}</p><p>${match.remarks.join(" · ")}</p></article>`).join("")}</div>` : ""}<div class="subtype-evidence"><b>Anti-A₁ ${displayReaction(antiA1)}</b><b>Anti-H ${displayReaction(antiH)}</b></div><p>Initial VISION, Manual IS, RT 15분, 37℃ ABO, Reverse typing 및 Anti-A₁/Anti-H를 하나의 phenotype progression으로 비교했습니다. Reference similarity는 후보 생성용이며 subgroup 또는 최종 ABO를 자동 확정하지 않습니다.</p>`;
 }
 
 function parseReferenceReaction(expected) {
@@ -791,7 +806,7 @@ function parseReferenceReaction(expected) {
   return {min:numbers[0],max:numbers[1] ?? numbers[0],mf};
 }
 
-function findSubgroupReferenceMatches(groups, observations) {
+function findSubgroupReferenceMatches(groups, observations, limit = 3) {
   const reference = window.aboSubgroupReference;
   if (!reference) return [];
   return reference.phenotypes.filter(item => groups.includes(item.group)).map(item => {
@@ -808,7 +823,28 @@ function findSubgroupReferenceMatches(groups, observations) {
     });
     const similarity = compared ? Math.max(0,Math.round(100-(penalty/(compared*4))*100)) : 0;
     return {...item,similarity,compared};
-  }).filter(item => item.compared >= 4).sort((a,b) => b.similarity-a.similarity || a.phenotype.localeCompare(b.phenotype)).slice(0,3);
+  }).filter(item => item.compared >= 4).sort((a,b) => b.similarity-a.similarity || a.phenotype.localeCompare(b.phenotype)).slice(0,limit);
+}
+
+function findSubgroupMatchesAcrossCase(groups) {
+  const subgroupTests = aboCaseHistory.additionalTests.filter(item => item.test === "ABO subgroup");
+  const latestSubgroup = subgroupTests[subgroupTests.length - 1]?.results || {};
+  const stageLabels = {initial:"Initial VISION",manualIS:"Manual IS",rt15:"RT 15분",warm37:"37℃ ABO"};
+  const stageResults = ["initial","manualIS","rt15","warm37"].filter(stage => aboCaseHistory[stage]).map(stage => ({stage,label:stageLabels[stage],results:aboCaseHistory[stage]}));
+  const byPhenotype = new Map();
+  stageResults.forEach(({label,results}) => {
+    const observations = {antiA:results.antiA,antiB:results.antiB,antiAB:null,antiA1:latestSubgroup.antiA1 ?? null,antiH:latestSubgroup.antiH ?? null,a1Cell:results.a1cell,a2Cell:null,bCell:results.bcell};
+    findSubgroupReferenceMatches(groups, observations, Number.POSITIVE_INFINITY).forEach(match => {
+      const key = `${match.group}|${match.phenotype}`;
+      if (!byPhenotype.has(key)) byPhenotype.set(key,{...match,stageSimilarities:[]});
+      byPhenotype.get(key).stageSimilarities.push({stage:label,similarity:match.similarity});
+    });
+  });
+  return [...byPhenotype.values()].map(match => ({
+    ...match,
+    similarity:Math.round(match.stageSimilarities.reduce((sum,item) => sum + item.similarity,0) / match.stageSimilarities.length),
+    bestSimilarity:Math.max(...match.stageSimilarities.map(item => item.similarity))
+  })).sort((a,b) => b.similarity-a.similarity || b.bestSimilarity-a.bestSimilarity || a.phenotype.localeCompare(b.phenotype)).slice(0,5);
 }
 
 const aboExpectedPatterns = {

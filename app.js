@@ -13,6 +13,8 @@ const tests = [
   { id: "a1cell", name: "A cell", desc: "역형검사 시약혈구", group: "reverse" },
   { id: "bcell", name: "B cell", desc: "Anti-B 확인", group: "reverse" }
 ];
+const rt15RecheckIds = ["antiA", "antiB", "antiD", "a1cell", "bcell"];
+const rt15RecheckTests = rt15RecheckIds.map(id => tests.find(test => test.id === id));
 let initialABOResults = null;
 const createABOCaseHistory = () => ({initial:null,manualIS:null,rt15:null,warm37:null,timeline:[],additionalTests:[],possibilities:[]});
 let aboCaseHistory = createABOCaseHistory();
@@ -645,14 +647,15 @@ function renderConflictSummary(analysis) {
 function showManual15Form(sourceResults) {
   const area = document.getElementById("manual15Area");
   area.innerHTML = `<div class="manual15-form"><div class="is-form-head"><span>03</span><div><strong>Manual 15분 방치 후 결과</strong><small>15분 후 응집 성상 재판정</small></div></div>
-    ${renderManualGroup("m15", "Front Typing", "정형검사 · 전체 재판독", tests.filter(test => test.group === "forward"), manualFrontGrades)}
-    ${renderManualGroup("m15", "Back Typing", "역형검사 · 전체 재판독", tests.filter(test => test.group === "reverse"), manualBackGrades)}
+    <p class="full-reread-note">Trigger 위치와 관계없이 Front/Back typing 전체 5개 항목을 함께 재검·재판독합니다.</p>
+    ${renderManualGroup("m15", "Front Typing", "정형검사 · 전체 재판독", rt15RecheckTests.filter(test => test.group === "forward"), manualFrontGrades)}
+    ${renderManualGroup("m15", "Back Typing", "역형검사 · 전체 재판독", rt15RecheckTests.filter(test => test.group === "reverse"), manualBackGrades)}
     <button type="button" class="is-analyze-button" id="analyze15MinButton">15분 결과 재판정 <span>→</span></button><div id="manual15Result"></div></div>`;
   document.getElementById("analyze15MinButton").addEventListener("click", () => analyzeManual15(sourceResults));
 }
 
 function analyzeManual15(sourceResults) {
-  const r = Object.fromEntries(tests.map(test => {
+  const r = Object.fromEntries(rt15RecheckTests.map(test => {
     const selected = document.querySelector(`input[name="m15-${test.id}"]:checked`);
     if (!selected) return [test.id,sourceResults[test.id]];
     return [test.id,selected.value.startsWith("mf") ? selected.value : valueOf(selected.value)];

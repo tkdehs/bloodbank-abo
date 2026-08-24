@@ -673,6 +673,23 @@ function assessSubgroupHistory(currentClassification = null) {
   }) : [];
   const commonPhenotypes = new Set(["A1","B","A1B"]);
   const meaningfulReference = referenceMatches.find(match => !commonPhenotypes.has(match.phenotype) && match.similarity >= SUBGROUP_REFERENCE_WORKUP_THRESHOLD) || null;
+  const reverseTypingHistory = orderedStages.flatMap(stage => {
+    const analysis = classifyISDiscrepancy(aboCaseHistory[stage]);
+    return (analysis.abnormalities || []).filter(item => item.location === "BACK").map(item => ({stage:stageLabels[stage],...item}));
+  });
+  const reverseReferenceMatches = aboCaseState.subgroup_suspected && reverseTypingHistory.length ? referenceMatches.map(match => ({
+    group:match.group,phenotype:match.phenotype,similarity:match.similarity,
+    expectedAcell:match.expected.a1Cell,expectedBcell:match.expected.bCell,
+    actualAcell:latest ? displayReaction(latest.a1cell) : null,actualBcell:latest ? displayReaction(latest.bcell) : null,
+    remarks:match.remarks
+  })) : [];
+  const parallelReverseCauses = reverseTypingHistory.length ? [
+    "Cold antibody / cold-reactive interference",
+    "Rouleaux",
+    "Unexpected alloantibody",
+    "Autoantibody",
+    "연령·면역상태·혈장 희석 등에 따른 reverse reaction 약화"
+  ] : [];
 
   const workupReasons = [];
   ["antiA","antiB"].forEach(key => {
@@ -703,7 +720,7 @@ function assessSubgroupHistory(currentClassification = null) {
   const features = {initialWeakReaction,manualReproduction,incubationChanges,mixedField,discrepancyLocation:currentClassification?.location || null,subgroupSuspicionHistory:evidence.map(item => ({stage:item.stage,target:item.key,type:item.type,detail:item.detail})),discrepancyHistory,possibilities:[...aboCaseHistory.possibilities],additionalTests:[...aboCaseHistory.additionalTests]};
   const assessment = {
     status:workupRequired ? "SUBGROUP_WORKUP_REQUIRED" : suspected ? "SUBGROUP_SUSPECTED" : null,
-    suspected,workupRequired,optionalWorkupAvailable,targets:targetList,evidence,workupReasons:[...new Set(workupReasons)],meaningfulReference,referenceMatches,historicalSupport,
+    suspected,workupRequired,optionalWorkupAvailable,targets:targetList,evidence,workupReasons:[...new Set(workupReasons)],meaningfulReference,referenceMatches,historicalSupport,reverseTypingHistory,reverseReferenceMatches,parallelReverseCauses,
     caseState:{...aboCaseState},abSubgroupSuspected:aboCaseState.ab_subgroup_suspected,
     features,
     stages:orderedStages.map(stage => ({stage:stageLabels[stage],results:{...aboCaseHistory[stage]}}))
@@ -718,10 +735,15 @@ function renderSubgroupHistory(assessment) {
   return `<div class="subgroup-history"><small>CASE HISTORY · INITIAL → IS → RT 15분 → 37℃ ABO</small><strong>이전 단계의 forward weak/MF 이력 유지</strong>${assessment.evidence.map(item => `<div><b>${item.stage}</b><span>${item.key === "antiA" ? "Anti-A" : item.key === "antiB" ? "Anti-B" : item.key}</span><em>${item.type}</em><p>${item.detail}</p></div>`).join("")}${assessment.historicalSupport ? `<p>검증된 비식별 case data의 subgroup/항원 약화 범주 ${assessment.historicalSupport}건은 보조적 맥락으로만 사용합니다.</p>` : ""}</div>`;
 }
 
+function renderReverseSubgroupCorrelation(assessment) {
+  if (!assessment?.suspected || !assessment.reverseTypingHistory?.length) return "";
+  return `<div class="reverse-subgroup-correlation"><small>PARALLEL REVIEW · REVERSE TYPING + DIAMED REFERENCE</small><strong>A cell/B cell 이상과 subgroup reference 보조 비교</strong><div class="reverse-finding-list">${assessment.reverseTypingHistory.map(item => `<p><b>${item.stage} · ${item.target}</b><span>${item.type}</span><em>Expected ${item.expected} / Actual ${item.actual}</em></p>`).join("")}</div>${assessment.reverseReferenceMatches.length ? `<div class="reverse-reference-list">${assessment.reverseReferenceMatches.map(match => `<article><b>${match.group} · ${match.phenotype}</b><em>Reference similarity ${match.similarity}%</em><p>DiaMed: A cell ${match.expectedAcell ?? "N/A"}, B cell ${match.expectedBcell ?? "N/A"}<br>Actual: A cell ${match.actualAcell}, B cell ${match.actualBcell}</p></article>`).join("")}</div>` : `<p>현재 입력값으로 비교 가능한 DiaMed subgroup reference 후보가 없습니다.</p>`}<div class="parallel-cause-list"><b>병렬로 유지할 다른 가능성</b>${assessment.parallelReverseCauses.map(cause => `<span>${cause}</span>`).join("")}</div><p><b>이 비교는 연관 가능성을 확인하는 참고 해석이며 subgroup 확정이나 기존 reverse discrepancy의 대체 판정이 아닙니다.</b></p></div>`;
+}
+
 function renderSubgroupStatus(assessment, scope) {
   if (!assessment?.suspected) return "";
   const abMessage = assessment.abSubgroupSuspected ? " Anti-A와 Anti-B가 모두 양성이면서 한쪽 또는 양쪽이 4+ 미만이므로 AB 계열 subgroup 가능성도 함께 고려합니다." : "";
-  return `<div class="subgroup-status suspected"><small>SUBGROUP_SUSPECTED · 독립 병렬 flag</small><strong>ABO 아형 가능성</strong><p>검사 과정 중 Forward typing의 Anti-A 또는 Anti-B에서 약한 반응 또는 Mixed Field가 확인되었습니다. 다른 원인도 함께 고려하면서 ABO 아형검사를 확인해 주세요.${abMessage}</p><p><b>중요: weak/MF reaction은 ABO subgroup을 확정하는 결과가 아니므로, 아형으로 자동 확정하거나 최종 ABO를 변경하지 마세요.</b></p>${renderSubgroupHistory(assessment)}<button type="button" class="is-analyze-button" id="startSubtypeWorkupButton-${scope}">아형검사 <span>→</span></button><div id="subtypeFormArea-${scope}"></div></div>`;
+  return `<div class="subgroup-status suspected"><small>SUBGROUP_SUSPECTED · 독립 병렬 flag</small><strong>ABO 아형 가능성</strong><p>검사 과정 중 Forward typing의 Anti-A 또는 Anti-B에서 약한 반응 또는 Mixed Field가 확인되었습니다. 다른 원인도 함께 고려하면서 ABO 아형검사를 확인해 주세요.${abMessage}</p><p><b>중요: weak/MF reaction은 ABO subgroup을 확정하는 결과가 아니므로, 아형으로 자동 확정하거나 최종 ABO를 변경하지 마세요.</b></p>${renderSubgroupHistory(assessment)}${renderReverseSubgroupCorrelation(assessment)}<button type="button" class="is-analyze-button" id="startSubtypeWorkupButton-${scope}">아형검사 <span>→</span></button><div id="subtypeFormArea-${scope}"></div></div>`;
 }
 
 function bindSubtypeWorkup(assessment, manualResult, scope) {

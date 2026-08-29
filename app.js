@@ -364,6 +364,7 @@ function continueISAnalysis(r) {
   const subtypeAssessment = assessSubgroupHistory(classification);
   if (classification.frontBackConflict) {
     const deferSubgroupFor37 = subtypeAssessment.workupRequired;
+    const needs15Min = needs15MinuteIncubation(classification);
     const box = document.getElementById("isResult");
     box.className = "is-outcome unresolved";
     box.dataset.classification = classification.classification;
@@ -371,9 +372,10 @@ function continueISAnalysis(r) {
     box.innerHTML = `<span>UNRESOLVED</span><strong>정형검사와 역형검사 결과가 일치하지 않습니다.</strong>
       ${renderHistoricalEvidence(classification)}
       <p>한랭반응성 간섭 가능성을 확인하기 위해 37℃ 조건 ABO 재검을 권장하며, Ab screening·자가대조 등 unexpected antibody 확인을 함께 검토하세요.</p>
-      ${deferSubgroupFor37 ? renderSubgroupDeferredNotice() : ""}<div id="warm25Area"></div>`;
+      ${deferSubgroupFor37 ? renderSubgroupDeferredNotice() : ""}<div id="warm25Area"></div>${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
     if (deferSubgroupFor37) hideEarlierSubgroupWorkups();
     showWarm25Form(r, classification);
+    if (needs15Min) showManual15Form(r);
     box.scrollIntoView({behavior:"smooth", block:"nearest"});
     return;
   }
@@ -459,9 +461,9 @@ function analyzeWarm25(sourceIS, sourceClassification, options = {}) {
 }
 
 function needs15MinuteIncubation(analysis) {
-  // Trigger 위치와 관계없이 시행 시에는 Front/Back 전체 ABO를 재판독한다.
-  // Back unexpected reaction은 trigger가 아니며 기존 전용 pathway로 보낸다.
-  return analysis.abnormalities.some(item =>
+  // 각 abnormality는 독립적으로 평가한다. Back unexpected reaction이 함께
+  // 있어도 Front/Back의 유효한 RT 15분 indication을 막지 않는다.
+  return (analysis?.abnormalities || []).some(item =>
     (item.location === "FRONT" && ["EXPECTED_REACTION_WEAK/MISSING", "MIXED_FIELD"].includes(item.type)) ||
     (item.location === "BACK" && item.type === "EXPECTED_REACTION_WEAK/MISSING")
   );
@@ -660,6 +662,8 @@ function analyzeManual15(sourceResults) {
   const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
   const subtypeAssessment = assessSubgroupHistory(classification);
   const frontUnexpectedRule = match ? null : createUnexpectedRule(classification, "FRONT");
+  const backUnexpectedRule = match ? null : createUnexpectedRule(classification, "BACK");
+  if (backUnexpectedRule) preserveCasePossibility("ROULEAUX_OR_UNEXPECTED_ANTIBODY", "RT 15분", "Back unexpected reaction 지속");
   const subgroupWorkupAfter15 = subtypeAssessment.workupRequired && hasActiveForwardSubgroupPattern(classification, r);
   const reactionChanges = render15MinuteComparison(sourceResults, r);
   const box = document.getElementById("manual15Result");
@@ -668,8 +672,9 @@ function analyzeManual15(sourceResults) {
   box.className = `is-outcome ${match && !subgroupHistoryPersists ? "resolved" : "unresolved"}`;
   box.innerHTML = match && !subgroupHistoryPersists
     ? `<span>RESOLVED</span><strong>15분 후 ${match.rh} ${match.type}형 정상 ABO 성상입니다.</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}<p>RhD는 별도 판정이며 기관 SOP에 따라 최종 검증·보고하세요.</p>`
-    : `<span>${match ? "아형 가능성 이력 유지" : "재평가 필요"}</span><strong>${match ? "15분 후 반응이 정상화되어도 이전 forward abnormality 이력을 유지합니다." : "15분 후 ABO 전체 결과를 다시 분석했습니다."}</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${match ? "" : renderAbnormalityPathways(classification, "15MIN")}<p>${match ? "현재 active ABO discrepancy는 해소되었지만 subgroup suspicion은 별도 상태로 보존합니다." : "현재 불일치를 유지하면서 과거 단계의 아형 가능성 이력을 별도로 관리합니다."}</p>${subgroupWorkupAfter15 ? `<div id="subtypeArea-rt15">${renderSubgroupStatus(subtypeAssessment,"rt15")}</div>` : ""}${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}`;
+    : `<span>${match ? "아형 가능성 이력 유지" : "재평가 필요"}</span><strong>${match ? "15분 후 반응이 정상화되어도 이전 forward abnormality 이력을 유지합니다." : "15분 후 ABO 전체 결과를 다시 분석했습니다."}</strong>${reactionChanges}${renderCandidateSummary(classification)}${renderExpectedActual(reanalysis)}${match ? "" : renderAbnormalityPathways(classification, "15MIN")}${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule,"back-rt15") : ""}<p>${match ? "현재 active ABO discrepancy는 해소되었지만 subgroup suspicion은 별도 상태로 보존합니다." : "현재 불일치를 유지하면서 과거 단계의 아형 가능성 이력을 별도로 관리합니다."}</p>${subgroupWorkupAfter15 ? `<div id="subtypeArea-rt15">${renderSubgroupStatus(subtypeAssessment,"rt15")}</div>` : ""}${frontUnexpectedRule ? `<div id="warm25Area"></div>` : ""}`;
   if (frontUnexpectedRule) showWarm25Form(r, {...classification,front:{...classification.front,unexpectedKeys:frontUnexpectedRule.abnormalKeys}});
+  if (backUnexpectedRule) bindBackUnexpectedOptions(backUnexpectedRule, r, classification, subtypeAssessment, "back-rt15");
   if (subgroupWorkupAfter15) bindSubtypeWorkup(subtypeAssessment, r, "rt15");
 }
 

@@ -16,7 +16,10 @@ const tests = [
 const rt15RecheckIds = ["antiA", "antiB", "antiD", "a1cell", "bcell"];
 const rt15RecheckTests = rt15RecheckIds.map(id => tests.find(test => test.id === id));
 let initialABOResults = null;
-const createABOCaseHistory = () => ({initial:null,manualIS:null,rt15:null,warm37:null,timeline:[],additionalTests:[],possibilities:[]});
+const createABOCaseHistory = () => ({
+  initial:null,manualIS:null,rt15:null,warm37:null,timeline:[],additionalTests:[],possibilities:[],
+  active_abnormalities:[],historical_abnormalities:[],resolved_abnormalities:[]
+});
 let aboCaseHistory = createABOCaseHistory();
 const createABOCaseState = () => ({
   has_initial_forward_weak:false,
@@ -63,6 +66,7 @@ function recordABOHistory(stage, results) {
   else if (aboCaseState.a_antigen_ever_detected && (aboCaseState.a_antigen_weak_history || aboCaseState.a_antigen_mf_history)) aboCaseState.candidate_family ||= "A_SUBGROUP";
   else if (aboCaseState.b_antigen_ever_detected && (aboCaseState.b_antigen_weak_history || aboCaseState.b_antigen_mf_history)) aboCaseState.candidate_family ||= "B_SUBGROUP";
   aboCaseState.subgroup_suspected ||= hasWeak || hasMF;
+  updateAbnormalityTracking(stage, results);
 }
 
 function recordAdditionalCaseHistory(test, results) {
@@ -379,7 +383,7 @@ function continueISAnalysis(r) {
     box.scrollIntoView({behavior:"smooth", block:"nearest"});
     return;
   }
-  const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
+  const match = classification.classification === "NORMAL" && !hasActiveAbnormalities() ? normalCandidateResult(classification, r) : null;
   const box = document.getElementById("isResult");
   if (match && !subtypeAssessment.suspected) {
     box.className = "is-outcome resolved";
@@ -389,7 +393,7 @@ function continueISAnalysis(r) {
     box.innerHTML = `<span>아형 가능성 이력 유지</span><strong>IS 결과가 정상 패턴이어도 이전 forward abnormality 이력을 유지합니다.</strong>${renderCandidateSummary(classification)}<p>현재 단계의 ABO 불일치는 해소되었지만 아형 가능성은 참고 이력으로 보존합니다. 15분 방치 후 결과에서 아형 의심 반응이 지속될 때만 아형검사를 진행합니다.</p>`;
   } else {
     const frontUnexpectedRule = createUnexpectedRule(classification, "FRONT");
-    const backUnexpectedRule = createUnexpectedRule(classification, "BACK");
+    const backUnexpectedRule = getActiveBackUnexpectedRule(classification);
     if (frontUnexpectedRule) preserveCasePossibility("COLD_INTERFERENCE", "Manual IS", "Front unexpected reaction 확인");
     if (backUnexpectedRule) preserveCasePossibility("ROULEAUX_OR_UNEXPECTED_ANTIBODY", "Manual IS", "Back unexpected reaction 확인");
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
@@ -437,7 +441,7 @@ function analyzeWarm25(sourceIS, sourceClassification, options = {}) {
   const r = readManualResults(prefix);
   recordABOHistory("warm37", r);
   const reanalysis = analyzeExpectedVsActual(r);
-  const match = reanalysis.normalPattern;
+  const match = reanalysis.normalPattern && !hasActiveAbnormalities() ? reanalysis.normalPattern : null;
   const subgroupAssessment = assessSubgroupHistory(reanalysis.generic);
   const strength = value => typeof value === "string" && value.startsWith("mf") ? Number(value.slice(2)) : value;
   const unexpectedKeys = sourceClassification.front?.unexpectedKeys || [];
@@ -659,10 +663,10 @@ function analyzeManual15(sourceResults) {
   recordABOHistory("rt15", r);
   const reanalysis = analyzeExpectedVsActual(r);
   const classification = reanalysis.generic;
-  const match = classification.classification === "NORMAL" ? normalCandidateResult(classification, r) : null;
+  const match = classification.classification === "NORMAL" && !hasActiveAbnormalities() ? normalCandidateResult(classification, r) : null;
   const subtypeAssessment = assessSubgroupHistory(classification);
   const frontUnexpectedRule = match ? null : createUnexpectedRule(classification, "FRONT");
-  const backUnexpectedRule = match ? null : createUnexpectedRule(classification, "BACK");
+  const backUnexpectedRule = match ? null : getActiveBackUnexpectedRule(classification);
   if (backUnexpectedRule) preserveCasePossibility("ROULEAUX_OR_UNEXPECTED_ANTIBODY", "RT 15분", "Back unexpected reaction 지속");
   const subgroupWorkupAfter15 = subtypeAssessment.workupRequired && hasActiveForwardSubgroupPattern(classification, r);
   const reactionChanges = render15MinuteComparison(sourceResults, r);
@@ -676,6 +680,57 @@ function analyzeManual15(sourceResults) {
   if (frontUnexpectedRule) showWarm25Form(r, {...classification,front:{...classification.front,unexpectedKeys:frontUnexpectedRule.abnormalKeys}});
   if (backUnexpectedRule) bindBackUnexpectedOptions(backUnexpectedRule, r, classification, subtypeAssessment, "back-rt15");
   if (subgroupWorkupAfter15) bindSubtypeWorkup(subtypeAssessment, r, "rt15");
+}
+
+function abnormalityId(item) {
+  return `${item.location}:${item.key}`;
+}
+
+function updateAbnormalityTracking(stage, results) {
+  const analysis = classifyISDiscrepancy(results);
+  const current = new Map((analysis.abnormalities || []).map(item => [abnormalityId(item), item]));
+  const records = aboCaseHistory.historical_abnormalities;
+  const existing = new Map(records.map(record => [record.id, record]));
+
+  current.forEach((item, id) => {
+    if (!existing.has(id)) {
+      const record = {id,key:item.key,target:item.target,location:item.location,classification:item.type,firstSeenStage:stage,lastSeenStage:stage,status:"active",history:[]};
+      records.push(record);
+      existing.set(id, record);
+    }
+  });
+
+  records.forEach(record => {
+    const item = current.get(record.id);
+    const reactionContinues = record.classification === "UNEXPECTED_REACTION_PRESENT" && reactionStrength(results[record.key]) > 0;
+    const active = Boolean(item || reactionContinues);
+    if (item) record.classification = item.type;
+    record.lastSeenStage = stage;
+    record.status = active ? "active" : "resolved";
+    record.history.push({stage,status:record.status,classification:record.classification,actual:displayReaction(results[record.key])});
+  });
+
+  aboCaseHistory.active_abnormalities = records.filter(record => record.status === "active");
+  aboCaseHistory.resolved_abnormalities = records.filter(record => record.status === "resolved");
+}
+
+function hasActiveAbnormalities() {
+  return aboCaseHistory.active_abnormalities.length > 0;
+}
+
+function getActiveBackUnexpectedRule(analysis) {
+  const currentRule = createUnexpectedRule(analysis, "BACK");
+  if (currentRule) return currentRule;
+  const persisted = aboCaseHistory.active_abnormalities.filter(record =>
+    record.location === "BACK" && record.classification === "UNEXPECTED_REACTION_PRESENT"
+  );
+  if (!persisted.length) return null;
+  return {
+    classification:"UNEXPECTED_REACTION_PRESENT",location:"BACK",
+    abnormalKeys:persisted.map(record => record.key),abnormalTargets:persisted.map(record => record.target),
+    suspectedCause:"Unexpected antibody 또는 cold interference 의심",
+    nextAction:"연전 및 과거력 확인, Ab screening 검사 및 37℃ 조건 ABO 검사"
+  };
 }
 
 function assessSubgroupHistory(currentClassification = null) {

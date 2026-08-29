@@ -33,8 +33,7 @@ const createABOCaseState = () => ({
   candidate_family:null,
   ab_subgroup_suspected:false,
   subgroup_suspected:false,
-  subgroup_workup_required:false,
-  subgroup_workup_presented:false
+  subgroup_workup_required:false
 });
 let aboCaseState = createABOCaseState();
 
@@ -834,13 +833,8 @@ function bindSubtypeWorkup(assessment, manualResult, scope) {
   if (!assessment?.workupRequired) return;
   const button = document.getElementById(`startSubtypeWorkupButton-${scope}`);
   if (!button) return;
-  if (aboCaseState.subgroup_workup_presented) {
-    button.closest(".subgroup-status")?.remove();
-    return;
-  }
-  aboCaseState.subgroup_workup_presented = true;
-  document.querySelectorAll('[id^="startSubtypeWorkupButton-"]').forEach(otherButton => {
-    if (otherButton !== button) otherButton.closest(".subgroup-status")?.remove();
+  document.querySelectorAll(".subgroup-status").forEach(panel => {
+    if (!panel.contains(button)) panel.remove();
   });
   button.addEventListener("click", () => {
     button.hidden = true;

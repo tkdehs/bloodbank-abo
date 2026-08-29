@@ -368,18 +368,20 @@ function continueISAnalysis(r) {
   const subtypeAssessment = assessSubgroupHistory(classification);
   if (classification.frontBackConflict) {
     const deferSubgroupFor37 = subtypeAssessment.workupRequired;
-    const needs15Min = needs15MinuteIncubation(classification, r);
+    const rt15Ui = getRT15UiState(classification, r);
     const box = document.getElementById("isResult");
     box.className = "is-outcome unresolved";
     box.dataset.classification = classification.classification;
+    box.dataset.needsRt15 = String(rt15Ui.needsRT15);
+    box.dataset.showRt15Input = String(rt15Ui.showRT15Input);
     box.dataset.analysis = JSON.stringify(classification);
     box.innerHTML = `<span>UNRESOLVED</span><strong>정형검사와 역형검사 결과가 일치하지 않습니다.</strong>
       ${renderHistoricalEvidence(classification)}
       <p>한랭반응성 간섭 가능성을 확인하기 위해 37℃ 조건 ABO 재검을 권장하며, Ab screening·자가대조 등 unexpected antibody 확인을 함께 검토하세요.</p>
-      ${deferSubgroupFor37 ? renderSubgroupDeferredNotice() : ""}<div id="warm25Area"></div>${needs15Min ? `<div id="manual15Area"></div>` : ""}`;
+      ${deferSubgroupFor37 ? renderSubgroupDeferredNotice() : ""}<div id="warm25Area"></div>${rt15Ui.showRT15Input ? `<div id="manual15Area"></div>` : ""}`;
     if (deferSubgroupFor37) hideEarlierSubgroupWorkups();
     showWarm25Form(r, classification);
-    if (needs15Min) showManual15Form(r);
+    if (rt15Ui.showRT15Input) showManual15Form(r);
     box.scrollIntoView({behavior:"smooth", block:"nearest"});
     return;
   }
@@ -397,12 +399,14 @@ function continueISAnalysis(r) {
     if (frontUnexpectedRule) preserveCasePossibility("COLD_INTERFERENCE", "Manual IS", "Front unexpected reaction 확인");
     if (backUnexpectedRule) preserveCasePossibility("ROULEAUX_OR_UNEXPECTED_ANTIBODY", "Manual IS", "Back unexpected reaction 확인");
     const needsWarm25 = Boolean(frontUnexpectedRule || classification.front?.hasUnexpectedPresent);
-    const needs15Min = needs15MinuteIncubation(classification, r);
+    const rt15Ui = getRT15UiState(classification, r);
     const deferSubgroupFor37 = needsWarm25 && subtypeAssessment.workupRequired;
     box.className = "is-outcome unresolved";
     box.dataset.candidateAbo = classification.candidateABO;
     box.dataset.classification = classification.classification;
     box.dataset.location = classification.location || "";
+    box.dataset.needsRt15 = String(rt15Ui.needsRT15);
+    box.dataset.showRt15Input = String(rt15Ui.showRT15Input);
     box.dataset.analysis = JSON.stringify({candidateABO:classification.candidateABO,classification:classification.classification,location:classification.location,abnormalities:classification.abnormalities,rhD:classification.rhD});
     box.dataset.frontClassification = frontUnexpectedRule?.classification || classification.front?.label || "normal";
     box.dataset.backClassification = classification.back?.label || "normal";
@@ -415,11 +419,11 @@ function continueISAnalysis(r) {
       ${backUnexpectedRule ? renderBackUnexpectedResolution(backUnexpectedRule,"back-is") : ""}
       ${deferSubgroupFor37 ? renderSubgroupDeferredNotice() : ""}
       ${needsWarm25 ? `<div id="warm25Area"></div>` : ""}
-      ${needs15Min ? `<div id="manual15Area"></div>` : ""}
+      ${rt15Ui.showRT15Input ? `<div id="manual15Area"></div>` : ""}
       `;
     if (deferSubgroupFor37) hideEarlierSubgroupWorkups();
     if (needsWarm25) showWarm25Form(r, frontUnexpectedRule ? {...classification, front:{...classification.front, unexpectedKeys:frontUnexpectedRule.abnormalKeys}} : classification);
-    if (needs15Min) showManual15Form(r);
+    if (rt15Ui.showRT15Input) showManual15Form(r);
     if (backUnexpectedRule) bindBackUnexpectedOptions(backUnexpectedRule, r, classification, subtypeAssessment, "back-is");
   }
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
@@ -475,6 +479,13 @@ function needs15MinuteIncubation(analysis, results = null) {
     item.location === "FRONT" && item.classification === "WEAK_MF"
   );
   return Boolean(classifiedIndication || caseLevelIndication);
+}
+
+function getRT15UiState(analysis, results) {
+  const needsRT15 = needs15MinuteIncubation(analysis, results);
+  // 표시 여부는 case-level RT15 indication만 따른다. 다른 discrepancy의
+  // 분류, subgroup suspicion, 또는 Back unexpected reaction은 관여하지 않는다.
+  return {needsRT15, showRT15Input:needsRT15};
 }
 
 function createUnexpectedRule(analysis, location) {
